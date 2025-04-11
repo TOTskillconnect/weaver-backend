@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: weaver-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 4 --timeout 120 app:app
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: SELENIUM_HEADLESS
+        value: true
+      - key: PYTHONUNBUFFERED
+        value: true
+    healthCheckPath: /health
+    autoDeploy: true
+    plan: starter 
