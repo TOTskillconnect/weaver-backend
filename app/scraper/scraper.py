@@ -4,60 +4,19 @@ Core scraping functionality for Y Combinator job pages.
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+import asyncio
 from datetime import datetime, UTC
-from typing import List, Optional, Generator, Dict
-import re
+from typing import List, Optional, Dict, Any, Tuple
 from urllib.parse import urljoin
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import WebDriverException, TimeoutException, NoSuchElementException
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.remote.webelement import WebElement
+from playwright.async_api import async_playwright, Page, TimeoutError, Route, Request
+import json
+import re
 
 from app.config import get_config
-from app.scraper.browser import BrowserManager
 
 # Initialize configuration and logging
 config = get_config()
 logger = logging.getLogger(__name__)
-
-# Initialize browser manager
-browser_manager = BrowserManager()
-
-@dataclass
-class FounderInfo:
-    """Data class to store founder information."""
-    role_page_url: str
-    founder_name: str
-    founder_title: str
-    linkedin_url: Optional[str]
-    extraction_timestamp: datetime
-    status: str = "success"
-
-    def to_dict(self) -> dict:
-        """Convert the founder info to a dictionary for CSV export."""
-        return {
-            "role_page_url": self.role_page_url,
-            "founder_name": self.founder_name,
-            "founder_title": self.founder_title,
-            "linkedin_url": self.linkedin_url or "N/A",
-            "extraction_timestamp": self.extraction_timestamp.isoformat(),
-            "status": self.status
-        }
-
-    @staticmethod
-    def validate_linkedin_url(url: Optional[str]) -> Optional[str]:
-        """Validate and clean LinkedIn URL."""
-        if not url:
-            return None
-        
-        # Basic LinkedIn URL validation
-        linkedin_pattern = r'^https?://(?:www\.)?linkedin\.com/.*'
-        if re.match(linkedin_pattern, url):
-            return url
-        return None
 
 class YCombinatorScraper:
     """Scrapes job listings from Y Combinator."""
@@ -65,300 +24,386 @@ class YCombinatorScraper:
     def __init__(self):
         """Initialize the job scraper."""
         self.config = config
-        self.browser = browser_manager
+        self.logger = logging.getLogger(__name__)
+        self.seen_urls = set()
+    
+    async def handle_route(self, route: Route, request: Request) -> None:
+        """Handle route interception for job data."""
+        if 'graphql' in request.url.lower() and request.method == "POST":
+            logger.info(f"Intercepted GraphQL request: {request.url}")
+            try:
+                # Get the request data
+                post_data = request.post_data
+                if post_data:
+                    logger.debug(f"Request data: {post_data}")
+            except Exception as e:
+                logger.error(f"Error reading request data: {e}")
         
-    def scrape(self, url: str, max_pages: Optional[int] = None) -> List[Dict[str, str]]:
+        # Continue with the request
+        await route.continue_()
+    
+    def is_job_listing_url(self, url: str) -> bool:
+        """Check if a URL is a job listing rather than a category page."""
+        # Category page patterns to exclude
+        category_patterns = [
+            r'/jobs/role/[^/]+$',  # Role category pages
+            r'/jobs/location/[^/]+$',  # Location category pages
+            r'/jobs/role/[^/]+/[^/]+$',  # Combined role/location category pages
+        ]
+        
+        # Check if the URL matches any category pattern
+        for pattern in category_patterns:
+            if re.search(pattern, url):
+                return False
+        
+        # Check if it's a company job listing
+        return '/companies/' in url and '/jobs/' in url
+    
+    async def scrape_job_details(self, page: Page, job_url: str) -> Dict[str, Any]:
+        """
+        Scrape detailed information from a job listing page.
+        
+        Args:
+            page: Playwright page instance
+            job_url: URL of the job listing
+            
+        Returns:
+            Dictionary containing detailed job information
+        """
+        try:
+            self.logger.info(f"Scraping job details from {job_url}")
+            await page.goto(job_url, wait_until='networkidle')
+            await page.wait_for_timeout(2000)  # Wait for dynamic content
+            
+            # Extract job details using JavaScript
+            details = await page.evaluate("""
+                () => {
+                    function extract(selector) {
+                        const el = document.querySelector(selector);
+                        return el ? el.textContent.trim() : '';
+                    }
+                    
+                    function extractList(selector) {
+                        const elements = document.querySelectorAll(selector);
+                        return Array.from(elements).map(el => el.textContent.trim());
+                    }
+                    
+                    // Extract job description
+                    const description = extract('.job-description, [class*="description"], [class*="Description"]');
+                    
+                    // Extract requirements
+                    const requirements = extract('[class*="requirements"], [class*="Requirements"]');
+                    
+                    // Extract benefits
+                    const benefits = extract('[class*="benefits"], [class*="Benefits"]');
+                    
+                    // Extract company info
+                    const companyInfo = {
+                        size: extract('[class*="size"], [class*="Size"]'),
+                        funding: extract('[class*="funding"], [class*="Funding"]'),
+                        batch: extract('[class*="batch"], [class*="Batch"]'),
+                        website: document.querySelector('a[class*="website"]')?.href || ''
+                    };
+                    
+                    // Extract tech stack
+                    const techStack = extractList('[class*="tech"], [class*="Tech"], [class*="stack"], [class*="Stack"]');
+                    
+                    // Extract location details
+                    const locationEl = document.querySelector('[class*="location"], [class*="Location"]');
+                    let location = locationEl ? locationEl.textContent.trim() : '';
+                    let isRemote = false;
+                    let workplaceType = '';
+                    
+                    if (location) {
+                        isRemote = /remote|distributed/i.test(location);
+                        if (location.includes('•')) {
+                            const parts = location.split('•').map(p => p.trim());
+                            location = parts[0];
+                            workplaceType = parts[1] || '';
+                        }
+                    }
+                    
+                    return {
+                        description,
+                        requirements,
+                        benefits,
+                        company_info: companyInfo,
+                        tech_stack: techStack,
+                        location_details: {
+                            full_location: location,
+                            is_remote: isRemote,
+                            workplace_type: workplaceType
+                        }
+                    };
+                }
+            """)
+            
+            return details
+            
+        except Exception as e:
+            self.logger.error(f"Error scraping job details: {str(e)}")
+            return {}
+    
+    async def scrape_with_pagination(self, page: Page, base_url: str) -> List[Dict[str, Any]]:
+        """
+        Scrape job listings with pagination support.
+        
+        Args:
+            page: Playwright page instance
+            base_url: Base URL to start scraping from
+            
+        Returns:
+            List of job listings
+        """
+        all_jobs = []
+        page_num = 1
+        has_more = True
+        
+        while has_more and page_num <= self.config.MAX_PAGES:
+            self.logger.info(f"Scraping page {page_num}")
+            
+            # Wait for job listings to load
+            await page.wait_for_timeout(2000)
+            
+            # Get jobs from current page
+            jobs = await self._extract_jobs_from_page(page)
+            
+            # Filter new jobs
+            new_jobs = [job for job in jobs if job['url'] not in self.seen_urls]
+            
+            if not new_jobs:
+                self.logger.info("No new jobs found, stopping pagination")
+                break
+                
+            # Add new jobs to results
+            all_jobs.extend(new_jobs)
+            for job in new_jobs:
+                self.seen_urls.add(job['url'])
+            
+            # Try to load more jobs
+            try:
+                load_more = await page.query_selector('button[class*="load-more"], button:has-text("Load More")')
+                if load_more:
+                    await load_more.click()
+                    await page.wait_for_timeout(2000)
+                    page_num += 1
+                else:
+                    has_more = False
+            except Exception as e:
+                self.logger.error(f"Error loading more jobs: {str(e)}")
+                has_more = False
+        
+        return all_jobs
+    
+    async def _extract_jobs_from_page(self, page: Page) -> List[Dict[str, Any]]:
+        """Extract job listings from the current page."""
+        jobs_data = await page.evaluate("""
+            () => {
+                const jobs = [];
+                
+                // Try multiple approaches to find job listings
+                const selectors = [
+                    'div[class*="job-"]',
+                    'div[class*="JobListing"]',
+                    'div[role="list"] > div',
+                    '.jobs-list > div',
+                    'a[href*="/company/"]'
+                ];
+                
+                for (const selector of selectors) {
+                    const elements = document.querySelectorAll(selector);
+                    
+                    elements.forEach(element => {
+                        try {
+                            const link = element.tagName === 'A' ? element : element.querySelector('a');
+                            if (!link) return;
+                            
+                            const href = link.getAttribute('href');
+                            if (!href || !href.includes('/companies/')) return;
+                            
+                            const container = element.tagName === 'A' ? element.parentElement : element;
+                            const title = link.textContent.trim();
+                            
+                            // Extract company name
+                            let company = '';
+                            const companyEl = container.querySelector('[class*="company"], [class*="Company"]');
+                            if (companyEl) {
+                                company = companyEl.textContent.trim();
+                            } else {
+                                const match = href.match(/\\/companies\\/([^/]+)/);
+                                if (match) {
+                                    company = match[1].split('-').map(word => 
+                                        word.charAt(0).toUpperCase() + word.slice(1)
+                                    ).join(' ');
+                                }
+                            }
+                            
+                            // Extract location with more detail
+                            let location = '';
+                            let isRemote = false;
+                            let workplaceType = '';
+                            
+                            const locationEl = container.querySelector('[class*="location"], [class*="Location"]');
+                            if (locationEl) {
+                                location = locationEl.textContent.trim();
+                                isRemote = /remote|distributed/i.test(location);
+                                
+                                if (location.includes('•')) {
+                                    const parts = location.split('•').map(p => p.trim());
+                                    location = parts[0];
+                                    workplaceType = parts[1] || '';
+                                }
+                            }
+                            
+                            // Extract posting date if available
+                            let postedDate = '';
+                            const dateEl = container.querySelector('[class*="date"], [class*="Date"], time');
+                            if (dateEl) {
+                                postedDate = dateEl.textContent.trim();
+                            }
+                            
+                            if (href && title) {
+                                jobs.push({
+                                    title: title || 'Unknown Title',
+                                    company: company || 'Unknown Company',
+                                    location: {
+                                        text: location || 'Location not specified',
+                                        is_remote: isRemote,
+                                        workplace_type: workplaceType
+                                    },
+                                    posted_date: postedDate,
+                                    url: href.startsWith('http') ? href : 'https://www.ycombinator.com' + href
+                                });
+                            }
+                        } catch (e) {
+                            console.error('Error processing element:', e);
+                        }
+                    });
+                    
+                    if (jobs.length > 0) break;
+                }
+                
+                return jobs;
+            }
+        """)
+        
+        return jobs_data
+    
+    async def scrape(self, url: str) -> List[Dict[str, Any]]:
         """
         Scrape job listings from the given URL.
         
         Args:
             url: Target URL to scrape
-            max_pages: Optional maximum number of pages to process
             
         Returns:
             List of job listing dictionaries
         """
-        results = []
-        retry_count = 0
-        
-        while retry_count < self.config.MAX_RETRIES:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                viewport={'width': self.config.BROWSER_WINDOW_WIDTH, 'height': self.config.BROWSER_WINDOW_HEIGHT},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            page = await context.new_page()
+            
             try:
-                with self.browser as driver:
-                    logger.info(f"Loading URL: {url}")
-                    driver.get(url)
+                # If we're given a specific job URL, scrape just that job
+                if '/companies/' in url and '/jobs/' in url:
+                    details = await self.scrape_job_details(page, url)
+                    return [details] if details else []
+                
+                # Otherwise, scrape job listings with pagination
+                target_url = url if '/role/' in url or '/jobs/' in url else 'https://www.ycombinator.com/jobs/role/software-engineer'
+                
+                self.logger.info(f"Navigating to {target_url}")
+                await page.goto(target_url, wait_until='networkidle')
+                self.logger.info("Page loaded")
+                
+                # Get all jobs with pagination
+                jobs = await self.scrape_with_pagination(page, target_url)
+                
+                # Scrape detailed information for each job
+                detailed_jobs = []
+                for job in jobs:
+                    if len(detailed_jobs) >= self.config.MAX_PAGES * 10:  # Limit total jobs
+                        break
+                        
+                    # Add delay between requests
+                    await page.wait_for_timeout(self.config.REQUEST_DELAY * 1000)
                     
-                    # Wait for job listings to load
-                    job_elements = WebDriverWait(driver, self.config.BROWSER_WAIT).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, self.config.SELECTORS['job_listing']))
-                    )
-                    
-                    logger.info(f"Found {len(job_elements)} job listings")
-                    
-                    for job in job_elements:
-                        try:
-                            job_data = self._extract_job_data(job)
-                            if job_data:
-                                # Get additional details from the job page
-                                if job_data.get('url'):
-                                    founder_info = self._extract_founder_info(job_data['url'])
-                                    if founder_info:
-                                        job_data.update(founder_info)
-                                results.append(job_data)
-                                logger.info(f"Extracted data for job: {job_data.get('title', 'Unknown')}")
-                        except Exception as e:
-                            logger.error(f"Error extracting job data: {str(e)}")
-                            continue
-                    
-                    if results:
-                        logger.info(f"Successfully scraped {len(results)} jobs")
-                        return results
-                    
-            except TimeoutException:
-                logger.warning(f"Timeout while loading page (attempt {retry_count + 1}/{self.config.MAX_RETRIES})")
-            except WebDriverException as e:
-                logger.error(f"Browser error: {str(e)}")
+                    details = await self.scrape_job_details(page, job['url'])
+                    if details:
+                        detailed_job = {**job, **details}
+                        detailed_jobs.append(detailed_job)
+                
+                self.logger.info(f"Successfully extracted {len(detailed_jobs)} detailed job listings")
+                return detailed_jobs
+            
+            except TimeoutError as e:
+                self.logger.error(f"Timeout error: {str(e)}")
+                return []
             except Exception as e:
-                logger.error(f"Unexpected error: {str(e)}")
-                
-            retry_count += 1
-            if retry_count < self.config.MAX_RETRIES:
-                delay = self.config.RETRY_DELAY * (2 ** retry_count)  # Exponential backoff
-                logger.info(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-                
-        logger.error(f"Failed to scrape jobs after {self.config.MAX_RETRIES} attempts")
-        return results
-        
-    def _extract_job_data(self, job_element: WebElement) -> Optional[Dict[str, str]]:
+                self.logger.error(f"Error during scraping: {str(e)}")
+                raise
+            
+            finally:
+                await browser.close()
+
+    async def _extract_job_data(self, element) -> Dict[str, Any]:
         """
         Extract data from a job listing element.
         
         Args:
-            job_element: Selenium WebElement containing job listing
+            element: Playwright ElementHandle containing job listing
             
         Returns:
             Dictionary containing job data or None if extraction fails
         """
-        try:
-            selectors = self.config.SELECTORS
-            
-            # Helper function to safely extract text
-            def safe_extract(selector: str, attribute: str = None) -> str:
-                try:
-                    element = job_element.find_element(By.CSS_SELECTOR, selectors[selector])
-                    if attribute:
-                        return element.get_attribute(attribute)
-                    return element.text.strip()
-                except NoSuchElementException:
-                    return "N/A"
-                except Exception as e:
-                    logger.warning(f"Error extracting {selector}: {str(e)}")
-                    return "N/A"
-            
-            # Extract job details
-            job_data = {
-                'title': safe_extract('job_title'),
-                'company': safe_extract('company_name'),
-                'url': safe_extract('job_url', 'href'),
-                'location': safe_extract('location'),
-                'job_type': safe_extract('job_type'),
-                'salary': safe_extract('salary'),
-                'details': safe_extract('job_details'),
-                'scraped_at': datetime.now(UTC).isoformat()
-            }
-            
-            # Validate required fields
-            if job_data['title'] == "N/A" or job_data['company'] == "N/A":
-                logger.warning("Missing required job data fields")
-                return None
-                
-            return job_data
-            
-        except Exception as e:
-            logger.error(f"Failed to extract job data: {str(e)}")
-            return None
-            
-    def _extract_founder_info(self, job_url: str) -> Optional[Dict[str, str]]:
-        """
-        Extract founder information from the job page.
-        
-        Args:
-            job_url: URL of the job listing page
-            
-        Returns:
-            Dictionary containing founder information or None if extraction fails
-        """
-        try:
-            with self.browser as driver:
-                logger.info(f"Loading job page: {job_url}")
-                driver.get(job_url)
-                
-                # Helper function to safely extract text
-                def safe_extract(selector: str, attribute: str = None) -> str:
-                    try:
-                        element = WebDriverWait(driver, self.config.BROWSER_WAIT).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, self.config.SELECTORS[selector]))
-                        )
-                        if attribute:
-                            return element.get_attribute(attribute)
-                        return element.text.strip()
-                    except (TimeoutException, NoSuchElementException):
-                        return "N/A"
-                    except Exception as e:
-                        logger.warning(f"Error extracting {selector}: {str(e)}")
-                        return "N/A"
-                
-                founder_data = {
-                    'founder_name': safe_extract('founder_name'),
-                    'founder_title': safe_extract('founder_title'),
-                    'linkedin_url': safe_extract('linkedin_url', 'href')
-                }
-                
-                return founder_data
-                
-        except Exception as e:
-            logger.error(f"Failed to extract founder info from {job_url}: {str(e)}")
-            return None
-
-    def _setup_browser(self) -> None:
-        """Set up the browser manager."""
-        self.browser = browser_manager
-    
-    def _extract_role_links(self, max_pages: Optional[int] = None) -> Generator[str, None, None]:
-        """
-        Extract job role page links from the main jobs page.
-        
-        Args:
-            max_pages: Optional maximum number of pages to process
-            
-        Yields:
-            str: Role page URLs
-        """
-        page_count = 0
-        processed_urls = set()
-        
-        try:
-            # Load the main jobs page
-            if not self.browser.load_page(self.base_url):
-                self.logger.error("Failed to load main jobs page")
-                return
-            
-            while True:
-                # Find all job links on the current page
-                elements = self.browser.find_elements_with_wait(
-                    By.CSS_SELECTOR,
-                    config.SELECTORS["role_links"]
-                )
-                
-                # Process found links
-                for element in elements:
-                    try:
-                        url = element.get_attribute('href')
-                        if url and url not in processed_urls:
-                            processed_urls.add(url)
-                            yield urljoin(self.base_url, url)
-                    except WebDriverException as e:
-                        self.logger.warning(f"Error extracting URL from element: {str(e)}")
-                
-                # Check if we've reached the limit
-                page_count += 1
-                if max_pages and page_count >= max_pages:
-                    break
-                
-                # TODO: Implement pagination logic if needed
-                # For now, we'll assume all jobs are on one page
-                break
-                
-        except Exception as e:
-            self.logger.error(f"Error extracting role links: {str(e)}")
-    
-    def _process_role_page(self, role_url: str) -> FounderInfo:
-        """
-        Process a single role page with retry logic.
-        
-        Args:
-            role_url: URL of the role page
-            
-        Returns:
-            FounderInfo: Extracted founder information
-        """
-        for attempt in range(config.MAX_RETRIES):
+        async def safe_extract(selector: str, get_text: bool = True) -> str:
             try:
-                result = self._extract_founder_info(role_url)
-                if result and result.status == "success":
-                    return result
-                
-                if attempt < config.MAX_RETRIES - 1:
-                    delay = self.browser._exponential_backoff(attempt)
-                    self.logger.info(f"Retrying {role_url} in {delay:.2f} seconds...")
-                    time.sleep(delay)
-                
+                el = await element.query_selector(selector)
+                if el:
+                    if get_text:
+                        return (await el.text_content()).strip()
+                    else:
+                        return await el.get_attribute('href')
+                return ""
             except Exception as e:
-                self.logger.error(f"Error processing {role_url} (attempt {attempt + 1}): {str(e)}")
-                if attempt < config.MAX_RETRIES - 1:
-                    continue
-                
-        return FounderInfo(
-            role_page_url=role_url,
-            founder_name="N/A",
-            founder_title="N/A",
-            linkedin_url=None,
-            extraction_timestamp=datetime.now(UTC),
-            status="max_retries_reached"
-        )
-    
-    def scrape(self, max_pages: Optional[int] = None) -> List[FounderInfo]:
-        """
-        Scrape founder information from Y Combinator job pages.
+                self.logger.error(f"Error extracting {selector}: {str(e)}")
+                return ""
         
-        Args:
-            max_pages: Optional maximum number of pages to process
-            
-        Returns:
-            List[FounderInfo]: List of extracted founder information
-        """
-        results = []
-        max_pages = max_pages or config.MAX_PAGES
+        # Try multiple selectors for each field
+        title_selectors = ['h3', 'h4', '.job-title', 'a[href^="/jobs/"]']
+        company_selectors = ['.company-name', 'h3 + div', 'a[href^="/companies/"]']
+        location_selectors = ['.location', 'div:has-text("Location")', '.job-location']
         
-        try:
-            # Get role links
-            role_links = list(self._extract_role_links(max_pages))
-            total_links = len(role_links)
-            self.logger.info(f"Found {total_links} role pages to process")
-            
-            # Process role pages concurrently
-            with ThreadPoolExecutor(max_workers=config.CONCURRENT_WORKERS) as executor:
-                future_to_url = {
-                    executor.submit(self._process_role_page, url): url 
-                    for url in role_links
-                }
-                
-                # Collect results as they complete
-                for i, future in enumerate(as_completed(future_to_url), 1):
-                    url = future_to_url[future]
-                    try:
-                        founder_info = future.result()
-                        results.append(founder_info)
-                        self.logger.info(
-                            f"Processed {i}/{total_links} pages - Status: {founder_info.status}"
-                        )
-                        
-                        # Add delay between requests
-                        if i < total_links:
-                            time.sleep(config.REQUEST_DELAY)
-                            
-                    except Exception as e:
-                        self.logger.error(f"Error processing future for {url}: {str(e)}")
-                        results.append(FounderInfo(
-                            role_page_url=url,
-                            founder_name="N/A",
-                            founder_title="N/A",
-                            linkedin_url=None,
-                            extraction_timestamp=datetime.now(UTC),
-                            status="future_error"
-                        ))
+        title = ""
+        for selector in title_selectors:
+            title = await safe_extract(selector)
+            if title:
+                break
         
-        except Exception as e:
-            self.logger.error(f"Error during scraping: {str(e)}")
+        company = ""
+        for selector in company_selectors:
+            company = await safe_extract(selector)
+            if company:
+                break
         
-        return results 
+        location = ""
+        for selector in location_selectors:
+            location = await safe_extract(selector)
+            if location:
+                break
+        
+        # Get the job URL if available
+        job_url = await safe_extract('a[href^="/jobs/"]', get_text=False)
+        
+        self.logger.info(f"Extracted job: {title} at {company}")
+        
+        return {
+            'title': title,
+            'company': company,
+            'location': location,
+            'url': job_url
+        } 

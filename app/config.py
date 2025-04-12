@@ -13,44 +13,57 @@ class Config:
     """Application configuration."""
     
     # Browser settings
-    BROWSER_WAIT: int = 10  # Seconds to wait for elements
+    BROWSER_WAIT: int = 30  # Seconds to wait for elements
     BROWSER_HEADLESS: bool = True
     BROWSER_WINDOW_WIDTH: int = 1920
     BROWSER_WINDOW_HEIGHT: int = 1080
     
     # Retry settings
     MAX_RETRIES: int = 3
-    RETRY_DELAY: float = 1.0  # Base delay in seconds
-    REQUEST_DELAY: float = 0.5  # Delay between requests
+    RETRY_DELAY: float = 2.0  # Base delay in seconds
+    REQUEST_DELAY: float = 1.0  # Delay between requests
     
     # CSS Selectors for job listings
     SELECTORS: Dict[str, str] = field(default_factory=lambda: {
-        'job_listing': 'div[class*="job-listing"]',  # Job listing container
-        'job_title': 'div[class*="job-title"] h2',   # Job title
-        'company_name': 'div[class*="company-name"]', # Company name
-        'job_url': 'a[href*="/companies/"]',         # Job URL
-        'job_details': 'div[class*="job-details"]',  # Job details
-        'location': 'div[class*="location"]',        # Location
-        'job_type': 'div[class*="job-type"]',       # Job type
-        'salary': 'div[class*="salary"]',           # Salary if available
-        'role_links': 'a[href*="/companies/"]',     # Links to individual job pages
-        'founder_name': 'div[class*="founder-name"]', # Founder name on role page
-        'founder_title': 'div[class*="founder-title"]', # Founder title
-        'linkedin_url': 'a[href*="linkedin.com"]'    # LinkedIn URL
+        'job_listing': '.jobs-list div[role="listitem"]',  # Each job listing container
+        'job_title': 'h4.font-bold',  # Job title text
+        'company_name': 'div.text-gray-900',  # Company name
+        'company_description': 'div.text-gray-600',  # Company description
+        'job_type': 'span.text-gray-500',  # Job type (Full-time, Part-time, etc)
+        'location': 'span.text-gray-500',  # Location info
+        'job_url': 'a[href^="/jobs/"]',  # Full job listing URL
+        'posted_time': 'span.text-gray-500',  # Posted time
+        
+        # Job details page selectors
+        'job_details': 'div.job-description',  # Job description section
+        'company_info': 'div.company-info',  # Company information section
+        'requirements': 'div.requirements',  # Job requirements section
+        'benefits': 'div.benefits',  # Benefits section
+        'tech_stack': 'div.tech-stack',  # Technology stack section
+        
+        # Company details
+        'company_logo': 'img.company-logo',  # Company logo
+        'company_website': 'a.company-website',  # Company website link
+        'company_size': 'span.company-size',  # Company size
+        'funding_stage': 'span.funding-stage',  # Funding information
+        'yc_batch': 'span.yc-batch'  # YC batch information
     })
     
     # CSV output settings
     CSV_HEADERS: List[str] = field(default_factory=lambda: [
         'title',
         'company',
-        'url',
+        'company_description',
         'location',
         'job_type',
-        'salary',
-        'details',
-        'founder_name',
-        'founder_title',
-        'linkedin_url',
+        'url',
+        'posted_time',
+        'company_size',
+        'funding_stage',
+        'yc_batch',
+        'tech_stack',
+        'requirements',
+        'benefits',
         'scraped_at'
     ])
     
