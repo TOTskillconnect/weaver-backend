@@ -4,6 +4,7 @@ Browser management module.
 
 from typing import Optional
 import logging
+import os
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -37,6 +38,11 @@ class BrowserManager:
         try:
             chrome_options = Options()
             
+            # Set Chrome binary path if provided
+            chrome_binary = os.getenv('CHROME_BIN')
+            if chrome_binary:
+                chrome_options.binary_location = chrome_binary
+            
             # Set headless mode based on config
             if self.config.BROWSER_HEADLESS:
                 chrome_options.add_argument('--headless=new')
@@ -49,12 +55,19 @@ class BrowserManager:
             chrome_options.add_argument('--ignore-certificate-errors')
             chrome_options.add_argument('--disable-notifications')
             chrome_options.add_argument('--disable-infobars')
+            chrome_options.add_argument('--remote-debugging-port=9222')
             
             # Set window size
             chrome_options.add_argument(f'--window-size={self.config.BROWSER_WINDOW_WIDTH},'
                                      f'{self.config.BROWSER_WINDOW_HEIGHT}')
             
-            service = Service(ChromeDriverManager().install())
+            # Use environment-provided ChromeDriver path or fall back to ChromeDriverManager
+            chromedriver_path = os.getenv('CHROMEDRIVER_PATH')
+            if chromedriver_path:
+                service = Service(executable_path=chromedriver_path)
+            else:
+                service = Service(ChromeDriverManager().install())
+                
             self.driver = webdriver.Chrome(
                 service=service,
                 options=chrome_options
