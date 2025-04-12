@@ -50,6 +50,13 @@
     </div>
 
     <div class="section">
+        <h2>3. Scrape LinkedIn URLs</h2>
+        <button id="linkedinScrapeBtn">Scrape LinkedIn URLs</button>
+        <h3>Response:</h3>
+        <pre id="linkedinResponse">Click button to test...</pre>
+    </div>
+
+    <div class="section">
         <h2>Debug Information</h2>
         <button id="viewStateBtn">View Response State</button>
         <h3>Current State:</h3>
@@ -60,7 +67,8 @@
         // Store the response data
         let responseState = {
             startResponse: null,
-            progressResponse: null
+            progressResponse: null,
+            linkedinResponse: null
         };
 
         // This mirrors the frontend's code for handling responses
@@ -157,6 +165,26 @@
         document.getElementById('checkProgressBtn').addEventListener('click', async () => {
             const jobId = document.getElementById('jobIdInput').value.trim();
             await checkProgress(jobId);
+        });
+        
+        document.getElementById('linkedinScrapeBtn').addEventListener('click', async () => {
+            const responseElement = document.getElementById('linkedinResponse');
+            responseElement.textContent = 'Loading...';
+            
+            try {
+                const url = 'https://weaver-backend.onrender.com/api/scrape/linkedin';
+                const response = await makeApiRequest(url, 'POST', {
+                    url: 'https://www.ycombinator.com/jobs/role/sales-manager'
+                });
+                
+                // Store the response
+                responseState.linkedinResponse = response;
+                responseElement.textContent = JSON.stringify(response, null, 2);
+                console.log('LinkedIn scraping successful:', response);
+            } catch (error) {
+                console.error('Error scraping LinkedIn URLs:', error);
+                responseElement.textContent = `Error: ${error.message}`;
+            }
         });
         
         document.getElementById('viewStateBtn').addEventListener('click', () => {

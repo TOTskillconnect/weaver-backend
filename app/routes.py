@@ -172,4 +172,72 @@ def get_job_progress(job_id):
         response['error'] = job['error']
         return jsonify(response), 500
         
-    return jsonify(response) 
+    return jsonify(response)
+
+@bp.route('/api/scrape/linkedin', methods=['POST', 'OPTIONS'])
+@cross_origin(supports_credentials=True, origins=["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"])
+@async_route
+async def scrape_linkedin():
+    """Scrape LinkedIn URLs directly from Y Combinator job pages without job tracking."""
+    try:
+        logger.info("Received LinkedIn scrape request")
+        data = request.get_json()
+        
+        if not data:
+            logger.error("No JSON data received")
+            return jsonify({"error": "No data provided"}), 400
+        
+        url = data.get('url')
+        
+        if not url:
+            logger.error("No URL provided in request")
+            return jsonify({"error": "URL is required"}), 400
+            
+        if not url.startswith('https://www.ycombinator.com'):
+            logger.error(f"Invalid URL domain: {url}")
+            return jsonify({"error": "Only Y Combinator URLs are supported"}), 400
+        
+        logger.info(f"Processing URL for LinkedIn extraction: {url}")
+        
+        # Initialize scraper
+        scraper = YCombinatorScraper()
+        
+        try:
+            # Scrape LinkedIn URLs directly
+            results = await scraper.scrape_linkedin_urls(url)
+            
+            if not results:
+                logger.warning("No LinkedIn URLs found")
+                return jsonify({
+                    "status": "success",
+                    "message": "No LinkedIn URLs found",
+                    "data": []
+                })
+            
+            logger.info(f"Successfully found LinkedIn URLs from {len(results)} jobs")
+            
+            return jsonify({
+                "status": "success",
+                "message": f"Successfully found LinkedIn URLs from {len(results)} jobs",
+                "data": results
+            })
+            
+        except Exception as e:
+            error_msg = f"Error scraping LinkedIn URLs: {str(e)}"
+            logger.error(error_msg)
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return jsonify({
+                "status": "error",
+                "message": error_msg,
+                "data": []
+            }), 500
+            
+    except Exception as e:
+        error_msg = f"Server error: {str(e)}"
+        logger.error(error_msg)
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "status": "error",
+            "message": error_msg,
+            "data": []
+        }), 500 

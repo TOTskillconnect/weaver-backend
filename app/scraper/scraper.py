@@ -276,3 +276,123 @@ class YCombinatorScraper:
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             
         return results 
+
+    async def extract_linkedin_urls(self, job_url: str) -> Dict[str, Any]:
+        """Extract LinkedIn URLs from a job page."""
+        page = await self._get_page()
+        try:
+            self.logger.info(f"Extracting LinkedIn URLs from {job_url}")
+            
+            # Navigate to the page with retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await page.goto(job_url, wait_until='domcontentloaded', timeout=30000)
+                    await self.wait_for_network_idle(page)
+                    break
+                except TimeoutError:
+                    if attempt == max_retries - 1:
+                        raise
+                    self.logger.warning(f"Timeout on attempt {attempt + 1}, retrying...")
+                    await asyncio.sleep(2)
+
+            # Wait for content to load
+            await page.wait_for_selector('main', timeout=10000)
+            await page.wait_for_timeout(2000)
+
+            # Extract basic job info and all LinkedIn URLs
+            data = await page.evaluate("""
+                () => {
+                    function safeExtract(selectors, attribute = 'textContent') {
+                        for (const selector of selectors) {
+                            try {
+                                const element = document.querySelector(selector);
+                                if (element) {
+                                    const value = attribute === 'textContent' ? 
+                                        element.textContent.trim() : 
+                                        element.getAttribute(attribute);
+                                    if (value) return value;
+                                }
+                            } catch (e) {
+                                console.error(`Error extracting ${selector}:`, e);
+                            }
+                        }
+                        return '';
+                    }
+                    
+                    // Extract all LinkedIn URLs from the page
+                    const linkedinUrls = Array.from(document.querySelectorAll('a[href*="linkedin.com"]'))
+                        .map(a => a.href)
+                        .filter(url => url && url.includes('linkedin.com'));
+                    
+                    return {
+                        title: safeExtract([
+                            'h1',
+                            '.job-title',
+                            '.JobTitle',
+                            '.role-title',
+                            'title'
+                        ]),
+                        company: safeExtract([
+                            '.company-name',
+                            '.CompanyName',
+                            '.company-title',
+                            'h2'
+                        ]),
+                        linkedin_urls: linkedinUrls
+                    };
+                }
+            """)
+            
+            result = {
+                'job_url': job_url,
+                'title': data.get('title', ''),
+                'company': data.get('company', ''),
+                'linkedin_urls': data.get('linkedin_urls', [])
+            }
+            
+            self.logger.info(f"Found {len(result['linkedin_urls'])} LinkedIn URLs for {job_url}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting LinkedIn URLs from {job_url}: {str(e)}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            return {
+                'job_url': job_url,
+                'title': '',
+                'company': '',
+                'linkedin_urls': [],
+                'error': str(e)
+            }
+        finally:
+            await page.close()
+            
+    async def scrape_linkedin_urls(self, url: str) -> list:
+        """Scrape LinkedIn URLs from all job pages."""
+        results = []
+        try:
+            async with self.browser_context():
+                # Get job listings
+                job_urls = await self.scrape_job_listings(url)
+                self.logger.info(f"Found {len(job_urls)} job URLs to process")
+                
+                if not job_urls:
+                    return []
+
+                # Extract LinkedIn URLs from each job page
+                for job_url in job_urls:
+                    try:
+                        data = await self.extract_linkedin_urls(job_url)
+                        if data and data.get('linkedin_urls'):
+                            results.append(data)
+                        # Rate limiting
+                        await asyncio.sleep(1)
+                    except Exception as e:
+                        self.logger.error(f"Error processing job {job_url}: {str(e)}")
+                        continue
+
+        except Exception as e:
+            self.logger.error(f"Error in LinkedIn URL scrape process: {str(e)}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            
+        return results 
