@@ -11,15 +11,17 @@ def create_app():
     app = Flask(__name__)
     
     # Configure CORS
-    CORS(app, resources={
-        r"/*": {
-            "origins": ["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"],
-            "methods": ["GET", "POST", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization"],
-            "expose_headers": ["Content-Range", "X-Content-Range"],
-            "supports_credentials": True
-        }
-    })
+    CORS(app, 
+         resources={r"/*": {
+             "origins": ["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"],
+             "methods": ["GET", "POST", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization"],
+             "expose_headers": ["Content-Range", "X-Content-Range"],
+             "supports_credentials": True,
+             "send_wildcard": False
+         }},
+         supports_credentials=True
+    )
     
     def validate_url(url: str) -> bool:
         """Validate if URL is from Y Combinator jobs."""

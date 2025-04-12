@@ -36,14 +36,14 @@ def async_route(f):
     return wrapper
 
 @bp.route('/health')
-@cross_origin()
+@cross_origin(supports_credentials=True, origins=["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"])
 def health_check():
     """Health check endpoint."""
     logger.info("Health check requested")
     return jsonify({"status": "healthy"})
 
 @bp.route('/submit', methods=['POST'])
-@cross_origin()
+@cross_origin(supports_credentials=True, origins=["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"])
 @async_route
 async def submit_url():
     """Submit a URL for scraping."""
