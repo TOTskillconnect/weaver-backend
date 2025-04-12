@@ -3,6 +3,7 @@ Main Flask application for the Cursor Y Combinator job scraper.
 """
 
 from flask import Flask, request, jsonify, send_file, make_response
+from flask_cors import CORS
 from pathlib import Path
 import logging
 import re
@@ -10,6 +11,7 @@ from datetime import datetime
 from functools import wraps
 from urllib.parse import urlparse
 import os
+import traceback
 
 from app.config import Config, DevelopmentConfig, TestingConfig, ProductionConfig
 from app.scraper import YCombinatorScraper
@@ -18,9 +20,31 @@ from app.utils import csv_handler
 # Initialize Flask app
 app = Flask(__name__)
 
+# Enable CORS
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "https://weaverai.vercel.app",
+            "http://localhost:3000",  # For local development
+            "http://localhost:5173"   # For Vite dev server
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "X-Request-ID", "Accept"],
+        "expose_headers": ["Content-Disposition", "X-Request-ID", "X-Record-Count"]
+    }
+})
+
 # Setup logging
 config = Config()
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG for more detailed logs
+
+# Add file handler for logging
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+file_handler = logging.FileHandler(log_dir / "app.log")
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
 
 # Constants
 MAX_REQUEST_SIZE = 1024 * 1024  # 1MB
@@ -131,7 +155,16 @@ def submit_url(request_id: str):
         
         # Start scraping
         logger.info(f"Starting scrape for URL: {source_url} (Request ID: {request_id})")
-        results = scraper.scrape()
+        try:
+            results = scraper.scrape(url=source_url)
+        except Exception as scrape_error:
+            logger.error(f"Scraping error for {source_url}: {str(scrape_error)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return error_response(
+                f'Scraping failed: {str(scrape_error)}',
+                500,
+                request_id
+            )
         
         if not results:
             return error_response(
@@ -156,8 +189,17 @@ def submit_url(request_id: str):
             })
         
         # Generate CSV
-        csv_content = csv_handler.get_csv_as_string(results)
-        if not csv_content:
+        try:
+            csv_content = csv_handler.get_csv_as_string(results)
+            if not csv_content:
+                return error_response(
+                    'Failed to generate CSV',
+                    500,
+                    request_id
+                )
+        except Exception as csv_error:
+            logger.error(f"CSV generation error: {str(csv_error)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return error_response(
                 'Failed to generate CSV',
                 500,
@@ -175,8 +217,9 @@ def submit_url(request_id: str):
         
     except Exception as e:
         logger.error(f"Error processing request {request_id}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return error_response(
-            'Internal server error',
+            f'Internal server error: {str(e)}',
             500,
             request_id
         )
