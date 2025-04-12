@@ -4,11 +4,13 @@ Flask routes for the job scraping API.
 
 import logging
 import traceback
+import uuid
 from flask import Blueprint, request, jsonify
 from flask_cors import cross_origin
 from app.scraper.scraper import YCombinatorScraper
 import asyncio
 import sys
+from typing import Dict
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +24,9 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 bp = Blueprint('routes', __name__)
+
+# In-memory job storage
+jobs: Dict[str, dict] = {}
 
 def async_route(f):
     """Decorator to run route handlers asynchronously."""
@@ -68,6 +73,18 @@ async def start_scrape():
             logger.error(f"Invalid URL domain: {url}")
             return jsonify({"error": "Only Y Combinator URLs are supported"}), 400
         
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
+        logger.info(f"Created job with ID: {job_id}")
+        
+        # Initialize job status
+        jobs[job_id] = {
+            'status': 'in_progress',
+            'url': url,
+            'results': None,
+            'error': None
+        }
+        
         logger.info(f"Processing URL: {url}")
         
         # Initialize scraper
@@ -79,34 +96,80 @@ async def start_scrape():
             
             if not results:
                 logger.warning("No results found")
+                jobs[job_id].update({
+                    'status': 'completed',
+                    'results': [],
+                    'message': "No job listings found"
+                })
                 return jsonify({
                     "status": "success",
                     "message": "No job listings found",
-                    "data": []
+                    "data": [],
+                    "job_id": job_id
                 })
             
             logger.info(f"Successfully scraped {len(results)} jobs")
+            jobs[job_id].update({
+                'status': 'completed',
+                'results': results,
+                'message': f"Successfully scraped {len(results)} jobs"
+            })
             
             return jsonify({
                 "status": "success",
                 "message": f"Successfully scraped {len(results)} jobs",
-                "data": results
+                "data": results,
+                "job_id": job_id
             })
             
         except Exception as e:
-            logger.error(f"Error during scraping: {str(e)}")
+            error_msg = f"Error scraping URL: {str(e)}"
+            logger.error(error_msg)
             logger.error(f"Traceback: {traceback.format_exc()}")
+            jobs[job_id].update({
+                'status': 'error',
+                'error': error_msg
+            })
             return jsonify({
                 "status": "error",
-                "message": f"Error scraping URL: {str(e)}",
-                "data": []
+                "message": error_msg,
+                "data": [],
+                "job_id": job_id
             }), 500
             
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
+        error_msg = f"Server error: {str(e)}"
+        logger.error(error_msg)
         logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({
             "status": "error",
-            "message": f"Server error: {str(e)}",
-            "data": []
-        }), 500 
+            "message": error_msg,
+            "data": [],
+        }), 500
+
+@bp.route('/api/scrape/progress/<job_id>', methods=['GET', 'OPTIONS'])
+@cross_origin(supports_credentials=True, origins=["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"])
+def get_job_progress(job_id):
+    """Get the progress of a scraping job."""
+    logger.info(f"Progress check requested for job: {job_id}")
+    
+    if not job_id:
+        logger.error("No job ID provided")
+        return jsonify({"error": "Job ID is required"}), 400
+        
+    job = jobs.get(job_id)
+    if not job:
+        logger.error(f"Job not found: {job_id}")
+        return jsonify({"error": "Job not found"}), 404
+        
+    response = {
+        "status": job['status'],
+        "message": job.get('message', ''),
+        "data": job.get('results', [])
+    }
+    
+    if job['status'] == 'error':
+        response['error'] = job['error']
+        return jsonify(response), 500
+        
+    return jsonify(response) 
