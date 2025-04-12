@@ -25,11 +25,18 @@ class Config:
     
     # CSS Selectors for job listings
     SELECTORS: Dict[str, str] = field(default_factory=lambda: {
-        'job_listing': '.job-listing',  # Main job listing container
-        'job_title': '.job-title',      # Job title element
-        'company_name': '.company-name', # Company name element
-        'job_url': '.job-link',         # Job URL element
-        'job_details': '.job-details'    # Job details element
+        'job_listing': 'div[class*="job-listing"]',  # Job listing container
+        'job_title': 'div[class*="job-title"] h2',   # Job title
+        'company_name': 'div[class*="company-name"]', # Company name
+        'job_url': 'a[href*="/companies/"]',         # Job URL
+        'job_details': 'div[class*="job-details"]',  # Job details
+        'location': 'div[class*="location"]',        # Location
+        'job_type': 'div[class*="job-type"]',       # Job type
+        'salary': 'div[class*="salary"]',           # Salary if available
+        'role_links': 'a[href*="/companies/"]',     # Links to individual job pages
+        'founder_name': 'div[class*="founder-name"]', # Founder name on role page
+        'founder_title': 'div[class*="founder-title"]', # Founder title
+        'linkedin_url': 'a[href*="linkedin.com"]'    # LinkedIn URL
     })
     
     # CSV output settings
@@ -37,23 +44,24 @@ class Config:
         'title',
         'company',
         'url',
+        'location',
+        'job_type',
+        'salary',
         'details',
+        'founder_name',
+        'founder_title',
+        'linkedin_url',
         'scraped_at'
     ])
+    
     CSV_DELIMITER: str = ','
     CSV_QUOTECHAR: str = '"'
     CSV_ENCODING: str = 'utf-8'
     CSV_FILENAME_PREFIX: str = 'yc_jobs'
     
-    # CSV column configuration
-    CSV_COLUMNS: List[str] = field(default_factory=lambda: [
-        'role_page_url',
-        'founder_name',
-        'founder_title',
-        'linkedin_url',
-        'extraction_timestamp',
-        'status'
-    ])
+    # Scraping settings
+    MAX_PAGES: int = 10  # Maximum number of pages to scrape
+    CONCURRENT_WORKERS: int = 4  # Number of concurrent workers for processing
     
     # Logging settings
     LOG_LEVEL: int = logging.INFO

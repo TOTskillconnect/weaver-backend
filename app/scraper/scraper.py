@@ -11,9 +11,10 @@ from typing import List, Optional, Generator, Dict
 import re
 from urllib.parse import urljoin
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import WebDriverException, TimeoutException
+from selenium.common.exceptions import WebDriverException, TimeoutException, NoSuchElementException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.remote.webelement import WebElement
 
 from app.config import get_config
 from app.scraper.browser import BrowserManager
@@ -83,6 +84,7 @@ class YCombinatorScraper:
         while retry_count < self.config.MAX_RETRIES:
             try:
                 with self.browser as driver:
+                    logger.info(f"Loading URL: {url}")
                     driver.get(url)
                     
                     # Wait for job listings to load
@@ -90,16 +92,26 @@ class YCombinatorScraper:
                         EC.presence_of_all_elements_located((By.CSS_SELECTOR, self.config.SELECTORS['job_listing']))
                     )
                     
+                    logger.info(f"Found {len(job_elements)} job listings")
+                    
                     for job in job_elements:
                         try:
                             job_data = self._extract_job_data(job)
                             if job_data:
+                                # Get additional details from the job page
+                                if job_data.get('url'):
+                                    founder_info = self._extract_founder_info(job_data['url'])
+                                    if founder_info:
+                                        job_data.update(founder_info)
                                 results.append(job_data)
+                                logger.info(f"Extracted data for job: {job_data.get('title', 'Unknown')}")
                         except Exception as e:
                             logger.error(f"Error extracting job data: {str(e)}")
                             continue
                     
-                    return results
+                    if results:
+                        logger.info(f"Successfully scraped {len(results)} jobs")
+                        return results
                     
             except TimeoutException:
                 logger.warning(f"Timeout while loading page (attempt {retry_count + 1}/{self.config.MAX_RETRIES})")
@@ -110,12 +122,14 @@ class YCombinatorScraper:
                 
             retry_count += 1
             if retry_count < self.config.MAX_RETRIES:
-                time.sleep(self.config.RETRY_DELAY)
+                delay = self.config.RETRY_DELAY * (2 ** retry_count)  # Exponential backoff
+                logger.info(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
                 
         logger.error(f"Failed to scrape jobs after {self.config.MAX_RETRIES} attempts")
         return results
         
-    def _extract_job_data(self, job_element) -> Optional[Dict[str, str]]:
+    def _extract_job_data(self, job_element: WebElement) -> Optional[Dict[str, str]]:
         """
         Extract data from a job listing element.
         
@@ -128,22 +142,82 @@ class YCombinatorScraper:
         try:
             selectors = self.config.SELECTORS
             
-            # Extract job details
-            title = job_element.find_element(By.CSS_SELECTOR, selectors['job_title']).text.strip()
-            company = job_element.find_element(By.CSS_SELECTOR, selectors['company_name']).text.strip()
-            url = job_element.find_element(By.CSS_SELECTOR, selectors['job_url']).get_attribute('href')
-            details = job_element.find_element(By.CSS_SELECTOR, selectors['job_details']).text.strip()
+            # Helper function to safely extract text
+            def safe_extract(selector: str, attribute: str = None) -> str:
+                try:
+                    element = job_element.find_element(By.CSS_SELECTOR, selectors[selector])
+                    if attribute:
+                        return element.get_attribute(attribute)
+                    return element.text.strip()
+                except NoSuchElementException:
+                    return "N/A"
+                except Exception as e:
+                    logger.warning(f"Error extracting {selector}: {str(e)}")
+                    return "N/A"
             
-            return {
-                'title': title,
-                'company': company,
-                'url': url,
-                'details': details,
+            # Extract job details
+            job_data = {
+                'title': safe_extract('job_title'),
+                'company': safe_extract('company_name'),
+                'url': safe_extract('job_url', 'href'),
+                'location': safe_extract('location'),
+                'job_type': safe_extract('job_type'),
+                'salary': safe_extract('salary'),
+                'details': safe_extract('job_details'),
                 'scraped_at': datetime.now(UTC).isoformat()
             }
             
+            # Validate required fields
+            if job_data['title'] == "N/A" or job_data['company'] == "N/A":
+                logger.warning("Missing required job data fields")
+                return None
+                
+            return job_data
+            
         except Exception as e:
             logger.error(f"Failed to extract job data: {str(e)}")
+            return None
+            
+    def _extract_founder_info(self, job_url: str) -> Optional[Dict[str, str]]:
+        """
+        Extract founder information from the job page.
+        
+        Args:
+            job_url: URL of the job listing page
+            
+        Returns:
+            Dictionary containing founder information or None if extraction fails
+        """
+        try:
+            with self.browser as driver:
+                logger.info(f"Loading job page: {job_url}")
+                driver.get(job_url)
+                
+                # Helper function to safely extract text
+                def safe_extract(selector: str, attribute: str = None) -> str:
+                    try:
+                        element = WebDriverWait(driver, self.config.BROWSER_WAIT).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, self.config.SELECTORS[selector]))
+                        )
+                        if attribute:
+                            return element.get_attribute(attribute)
+                        return element.text.strip()
+                    except (TimeoutException, NoSuchElementException):
+                        return "N/A"
+                    except Exception as e:
+                        logger.warning(f"Error extracting {selector}: {str(e)}")
+                        return "N/A"
+                
+                founder_data = {
+                    'founder_name': safe_extract('founder_name'),
+                    'founder_title': safe_extract('founder_title'),
+                    'linkedin_url': safe_extract('linkedin_url', 'href')
+                }
+                
+                return founder_data
+                
+        except Exception as e:
+            logger.error(f"Failed to extract founder info from {job_url}: {str(e)}")
             return None
 
     def _setup_browser(self) -> None:
@@ -197,68 +271,6 @@ class YCombinatorScraper:
                 
         except Exception as e:
             self.logger.error(f"Error extracting role links: {str(e)}")
-    
-    def _extract_founder_info(self, role_url: str) -> Optional[FounderInfo]:
-        """
-        Extract founder information from a role page.
-        
-        Args:
-            role_url: URL of the role page
-            
-        Returns:
-            FounderInfo if successful, None otherwise
-        """
-        try:
-            if not self.browser.load_page(role_url):
-                return FounderInfo(
-                    role_page_url=role_url,
-                    founder_name="N/A",
-                    founder_title="N/A",
-                    linkedin_url=None,
-                    extraction_timestamp=datetime.now(UTC),
-                    status="failed_to_load"
-                )
-            
-            # Extract founder name
-            name_elem = self.browser.find_element_with_wait(
-                By.CSS_SELECTOR,
-                config.SELECTORS["founder_name"]
-            )
-            founder_name = name_elem.text.strip() if name_elem else "N/A"
-            
-            # Extract founder title
-            title_elem = self.browser.find_element_with_wait(
-                By.CSS_SELECTOR,
-                config.SELECTORS["founder_title"]
-            )
-            founder_title = title_elem.text.strip() if title_elem else "N/A"
-            
-            # Extract LinkedIn URL
-            linkedin_elem = self.browser.find_element_with_wait(
-                By.CSS_SELECTOR,
-                config.SELECTORS["linkedin_url"]
-            )
-            linkedin_url = linkedin_elem.get_attribute('href') if linkedin_elem else None
-            linkedin_url = FounderInfo.validate_linkedin_url(linkedin_url)
-            
-            return FounderInfo(
-                role_page_url=role_url,
-                founder_name=founder_name,
-                founder_title=founder_title,
-                linkedin_url=linkedin_url,
-                extraction_timestamp=datetime.now(UTC)
-            )
-            
-        except Exception as e:
-            self.logger.error(f"Error extracting founder info from {role_url}: {str(e)}")
-            return FounderInfo(
-                role_page_url=role_url,
-                founder_name="N/A",
-                founder_title="N/A",
-                linkedin_url=None,
-                extraction_timestamp=datetime.now(UTC),
-                status="error"
-            )
     
     def _process_role_page(self, role_url: str) -> FounderInfo:
         """
