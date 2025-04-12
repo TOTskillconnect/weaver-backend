@@ -6,7 +6,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - FLASK_APP=run.py
+      - FLASK_APP=app.py
       - FLASK_ENV=production
       - PYTHONUNBUFFERED=1
     volumes:
@@ -17,4 +17,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s 
+      start_period: 40s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536 
