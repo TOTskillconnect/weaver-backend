@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weaver API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Weaver API Test</h1>
+    
+    <div class="section">
+        <h2>1. Start Scrape</h2>
+        <button id="startScrapeBtn">Start Scrape</button>
+        <h3>Response:</h3>
+        <pre id="startResponse">Click button to test...</pre>
+    </div>
+    
+    <div class="section">
+        <h2>2. Check Progress</h2>
+        <input type="text" id="jobIdInput" placeholder="Enter Job ID" style="padding: 8px; width: 300px;">
+        <button id="checkProgressBtn">Check Progress</button>
+        <h3>Response:</h3>
+        <pre id="progressResponse">Enter a job ID and click button to test...</pre>
+    </div>
+
+    <div class="section">
+        <h2>Debug Information</h2>
+        <button id="viewStateBtn">View Response State</button>
+        <h3>Current State:</h3>
+        <pre id="debugInfo">Click to view state...</pre>
+    </div>
+
+    <script>
+        // Store the response data
+        let responseState = {
+            startResponse: null,
+            progressResponse: null
+        };
+
+        // This mirrors the frontend's code for handling responses
+        async function makeApiRequest(url, method, body = null) {
+            console.log(`Making API request to: ${url}`);
+            
+            const options = {
+                method: method,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include'
+            };
+            
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+            
+            try {
+                const response = await fetch(url, options);
+                console.log(`API response status: ${response.status}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Response data:', data);
+                return data;
+            } catch (error) {
+                console.error(`API request failed for ${url}:`, error);
+                throw error;
+            }
+        }
+
+        document.getElementById('startScrapeBtn').addEventListener('click', async () => {
+            const responseElement = document.getElementById('startResponse');
+            responseElement.textContent = 'Loading...';
+            
+            try {
+                const url = 'https://weaver-backend.onrender.com/api/scrape/start';
+                const response = await makeApiRequest(url, 'POST', {
+                    url: 'https://www.ycombinator.com/jobs/role/sales-manager'
+                });
+                
+                // Store the response
+                responseState.startResponse = response;
+                responseElement.textContent = JSON.stringify(response, null, 2);
+                
+                // Check for job ID
+                const jobId = response.job_id;
+                if (jobId) {
+                    console.log(`Scrape job started with ID: ${jobId}`);
+                    document.getElementById('jobIdInput').value = jobId;
+                    
+                    // Automatically check progress
+                    await checkProgress(jobId);
+                } else {
+                    console.log('No valid jobId received from backend:', response);
+                    console.error('Invalid response from server - no job ID received');
+                    throw new Error('Invalid response from server - no job ID received');
+                }
+            } catch (error) {
+                console.error('Error starting scrape job:', error);
+                responseElement.textContent = `Error: ${error.message}`;
+            }
+        });
+        
+        async function checkProgress(jobId) {
+            const responseElement = document.getElementById('progressResponse');
+            
+            if (!jobId) {
+                responseElement.textContent = 'Error: Please enter a job ID';
+                return;
+            }
+            
+            responseElement.textContent = 'Loading...';
+            
+            try {
+                const url = `https://weaver-backend.onrender.com/api/scrape/progress/${jobId}`;
+                console.log(`Checking progress for job: ${jobId}`);
+                
+                const data = await makeApiRequest(url, 'GET');
+                responseState.progressResponse = data;
+                responseElement.textContent = JSON.stringify(data, null, 2);
+                return data;
+            } catch (error) {
+                console.error('Error checking progress:', error);
+                responseElement.textContent = `Error: ${error.message}`;
+                throw error;
+            }
+        }
+        
+        document.getElementById('checkProgressBtn').addEventListener('click', async () => {
+            const jobId = document.getElementById('jobIdInput').value.trim();
+            await checkProgress(jobId);
+        });
+        
+        document.getElementById('viewStateBtn').addEventListener('click', () => {
+            const debugElement = document.getElementById('debugInfo');
+            debugElement.textContent = JSON.stringify(responseState, null, 2);
+        });
+    </script>
+</body>
+</html> 
