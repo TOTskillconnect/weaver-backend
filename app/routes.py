@@ -4,6 +4,8 @@ API routes for the Flask application.
 
 from datetime import datetime, UTC
 from flask import request, jsonify, make_response
+import asyncio
+from functools import wraps
 
 from app import app, validate_url
 from app.scraper import YCombinatorScraper
@@ -16,15 +18,6 @@ def get_timestamp():
     """Get current UTC timestamp in ISO format."""
     return datetime.now(UTC).isoformat()
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Basic health check endpoint."""
-    return jsonify({
-        'status': 'healthy',
-        'version': '0.1.0',
-        'timestamp': get_timestamp()
-    })
-
 def error_response(message: str, status_code: int = 400, request_id: str = None) -> tuple:
     """Generate consistent error response."""
     response = {
@@ -34,8 +27,30 @@ def error_response(message: str, status_code: int = 400, request_id: str = None)
     }
     return jsonify(response), status_code
 
+def async_route(f):
+    """Decorator to handle async routes."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(f(*args, **kwargs))
+    return wrapper
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Basic health check endpoint."""
+    return jsonify({
+        'status': 'healthy',
+        'version': '0.1.0',
+        'timestamp': get_timestamp()
+    })
+
 @app.route('/submit', methods=['POST'])
-def submit_url():
+@async_route
+async def submit_url():
     """
     Submit a URL for scraping Y Combinator job pages.
     
@@ -99,12 +114,19 @@ def submit_url():
         
         # Start scraping
         app.logger.info(f"Starting scrape for URL: {source_url} (Request ID: {request_id})")
-        results = scraper.scrape(url=source_url)
-        
-        if not results:
+        try:
+            results = await scraper.scrape(url=source_url)
+            if not results:
+                return error_response(
+                    'No data found',
+                    404,
+                    request_id
+                )
+        except Exception as e:
+            app.logger.error(f"Scraping error for {source_url}: {str(e)}")
             return error_response(
-                'No data found',
-                404,
+                f'Scraping failed: {str(e)}',
+                500,
                 request_id
             )
         
@@ -124,8 +146,16 @@ def submit_url():
             })
         
         # Generate CSV
-        csv_content = csv_handler.get_csv_as_string(results)
-        if not csv_content:
+        try:
+            csv_content = csv_handler.get_csv_as_string(results)
+            if not csv_content:
+                return error_response(
+                    'Failed to generate CSV',
+                    500,
+                    request_id
+                )
+        except Exception as e:
+            app.logger.error(f"CSV generation error: {str(e)}")
             return error_response(
                 'Failed to generate CSV',
                 500,
@@ -143,6 +173,7 @@ def submit_url():
         
     except Exception as e:
         app.logger.error(f"Error processing request {request_id}: {str(e)}")
+        app.logger.error(f"Traceback: {traceback.format_exc()}")
         return error_response(
             'Internal server error',
             500,
