@@ -9,7 +9,17 @@ from urllib.parse import urlparse
 def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__)
-    CORS(app)
+    
+    # Configure CORS
+    CORS(app, resources={
+        r"/*": {
+            "origins": ["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"],
+            "methods": ["GET", "POST", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"],
+            "expose_headers": ["Content-Range", "X-Content-Range"],
+            "supports_credentials": True
+        }
+    })
     
     def validate_url(url: str) -> bool:
         """Validate if URL is from Y Combinator jobs."""
