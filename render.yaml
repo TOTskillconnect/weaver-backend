@@ -1,16 +1,24 @@
 services:
   - type: web
     name: weaver-backend
-    env: python
+    env: docker
+    dockerfilePath: ./Dockerfile
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 4 --timeout 120 app:app
     envVars:
       - key: FLASK_ENV
         value: production
       - key: SELENIUM_HEADLESS
-        value: true
+        value: "true"
       - key: PYTHONUNBUFFERED
-        value: true
+        value: "true"
+      - key: CHROME_BIN
+        value: /usr/bin/google-chrome-stable
+      - key: CHROMEDRIVER_PATH
+        value: /usr/local/bin/chromedriver
     healthCheckPath: /health
     autoDeploy: true
-    plan: starter 
+    plan: starter # Free tier
+    scaling:
+      minInstances: 1
+      maxInstances: 1 
