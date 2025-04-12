@@ -40,15 +40,18 @@ def async_route(f):
 def health_check():
     """Health check endpoint."""
     logger.info("Health check requested")
-    return jsonify({"status": "healthy"})
+    return jsonify({
+        "status": "healthy",
+        "version": "0.1.0"
+    })
 
-@bp.route('/submit', methods=['POST'])
+@bp.route('/api/scrape/start', methods=['POST', 'OPTIONS'])
 @cross_origin(supports_credentials=True, origins=["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"])
 @async_route
-async def submit_url():
-    """Submit a URL for scraping."""
+async def start_scrape():
+    """Start a new scraping job."""
     try:
-        logger.info("Received submit request")
+        logger.info("Received scrape request")
         data = request.get_json()
         
         if not data:
@@ -56,7 +59,6 @@ async def submit_url():
             return jsonify({"error": "No data provided"}), 400
         
         url = data.get('url')
-        output_format = data.get('format', 'json')
         
         if not url:
             logger.error("No URL provided in request")
@@ -67,7 +69,6 @@ async def submit_url():
             return jsonify({"error": "Only Y Combinator URLs are supported"}), 400
         
         logger.info(f"Processing URL: {url}")
-        logger.info(f"Requested format: {output_format}")
         
         # Initialize scraper
         scraper = YCombinatorScraper()
@@ -86,11 +87,6 @@ async def submit_url():
             
             logger.info(f"Successfully scraped {len(results)} jobs")
             
-            # Format response based on requested format
-            if output_format == 'csv':
-                # TODO: Implement CSV formatting
-                pass
-            
             return jsonify({
                 "status": "success",
                 "message": f"Successfully scraped {len(results)} jobs",
@@ -103,7 +99,7 @@ async def submit_url():
             return jsonify({
                 "status": "error",
                 "message": f"Error scraping URL: {str(e)}",
-                "traceback": traceback.format_exc()
+                "data": []
             }), 500
             
     except Exception as e:
@@ -112,5 +108,5 @@ async def submit_url():
         return jsonify({
             "status": "error",
             "message": f"Server error: {str(e)}",
-            "traceback": traceback.format_exc()
+            "data": []
         }), 500 
