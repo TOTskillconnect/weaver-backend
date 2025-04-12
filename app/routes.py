@@ -1,35 +1,30 @@
 """
-API routes for the Flask application.
+Flask routes for the job scraping API.
 """
 
-from datetime import datetime, UTC
-from flask import request, jsonify, make_response
+import logging
+import traceback
+from flask import Blueprint, request, jsonify
+from flask_cors import cross_origin
+from app.scraper.scraper import YCombinatorScraper
 import asyncio
-from functools import wraps
+import sys
 
-from app import app, validate_url
-from app.scraper import YCombinatorScraper
-from app.utils import csv_handler
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('app.log')
+    ]
+)
 
-# Constants
-MAX_REQUEST_SIZE = 1024 * 1024  # 1MB
-
-def get_timestamp():
-    """Get current UTC timestamp in ISO format."""
-    return datetime.now(UTC).isoformat()
-
-def error_response(message: str, status_code: int = 400, request_id: str = None) -> tuple:
-    """Generate consistent error response."""
-    response = {
-        'error': message,
-        'timestamp': get_timestamp(),
-        'request_id': request_id
-    }
-    return jsonify(response), status_code
+logger = logging.getLogger(__name__)
+bp = Blueprint('routes', __name__)
 
 def async_route(f):
-    """Decorator to handle async routes."""
-    @wraps(f)
+    """Decorator to run route handlers asynchronously."""
     def wrapper(*args, **kwargs):
         try:
             loop = asyncio.get_event_loop()
@@ -37,145 +32,85 @@ def async_route(f):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         return loop.run_until_complete(f(*args, **kwargs))
+    wrapper.__name__ = f.__name__
     return wrapper
 
-@app.route('/health', methods=['GET'])
+@bp.route('/health')
+@cross_origin()
 def health_check():
-    """Basic health check endpoint."""
-    return jsonify({
-        'status': 'healthy',
-        'version': '0.1.0',
-        'timestamp': get_timestamp()
-    })
+    """Health check endpoint."""
+    logger.info("Health check requested")
+    return jsonify({"status": "healthy"})
 
-@app.route('/submit', methods=['POST'])
+@bp.route('/submit', methods=['POST'])
+@cross_origin()
 @async_route
 async def submit_url():
-    """
-    Submit a URL for scraping Y Combinator job pages.
-    
-    Expected payload:
-    {
-        "url": "https://www.ycombinator.com/jobs",
-        "format": "csv"  # Optional, defaults to csv. Alternatives: json
-    }
-    """
+    """Submit a URL for scraping."""
     try:
-        # Generate request ID
-        request_id = datetime.now(UTC).strftime('%Y%m%d%H%M%S-') + str(id(request))[:8]
-        
-        # Validate request size
-        if request.content_length and request.content_length > MAX_REQUEST_SIZE:
-            return error_response(
-                'Request too large',
-                413,
-                request_id
-            )
-        
-        # Validate content type
-        if not request.is_json:
-            return error_response(
-                'Content-Type must be application/json',
-                400,
-                request_id
-            )
-        
+        logger.info("Received submit request")
         data = request.get_json()
         
-        # Validate required fields
-        if 'url' not in data:
-            return error_response(
-                'URL is required',
-                400,
-                request_id
-            )
+        if not data:
+            logger.error("No JSON data received")
+            return jsonify({"error": "No data provided"}), 400
         
-        source_url = data['url']
-        response_format = data.get('format', 'csv').lower()
+        url = data.get('url')
+        output_format = data.get('format', 'json')
         
-        # Validate URL
-        if not validate_url(source_url):
-            return error_response(
-                'Invalid Y Combinator jobs URL',
-                400,
-                request_id
-            )
+        if not url:
+            logger.error("No URL provided in request")
+            return jsonify({"error": "URL is required"}), 400
+            
+        if not url.startswith('https://www.ycombinator.com'):
+            logger.error(f"Invalid URL domain: {url}")
+            return jsonify({"error": "Only Y Combinator URLs are supported"}), 400
         
-        # Validate format
-        if response_format not in ['csv', 'json']:
-            return error_response(
-                'Invalid format. Supported formats: csv, json',
-                400,
-                request_id
-            )
+        logger.info(f"Processing URL: {url}")
+        logger.info(f"Requested format: {output_format}")
         
         # Initialize scraper
         scraper = YCombinatorScraper()
         
-        # Start scraping
-        app.logger.info(f"Starting scrape for URL: {source_url} (Request ID: {request_id})")
         try:
-            results = await scraper.scrape(url=source_url)
+            # Scrape the URL
+            results = await scraper.scrape(url)
+            
             if not results:
-                return error_response(
-                    'No data found',
-                    404,
-                    request_id
-                )
-        except Exception as e:
-            app.logger.error(f"Scraping error for {source_url}: {str(e)}")
-            return error_response(
-                f'Scraping failed: {str(e)}',
-                500,
-                request_id
-            )
-        
-        # Prepare response metadata
-        metadata = {
-            'request_id': request_id,
-            'source_url': source_url,
-            'timestamp': get_timestamp(),
-            'record_count': len(results)
-        }
-        
-        # Return based on requested format
-        if response_format == 'json':
+                logger.warning("No results found")
+                return jsonify({
+                    "status": "success",
+                    "message": "No job listings found",
+                    "data": []
+                })
+            
+            logger.info(f"Successfully scraped {len(results)} jobs")
+            
+            # Format response based on requested format
+            if output_format == 'csv':
+                # TODO: Implement CSV formatting
+                pass
+            
             return jsonify({
-                'metadata': metadata,
-                'data': results
+                "status": "success",
+                "message": f"Successfully scraped {len(results)} jobs",
+                "data": results
             })
-        
-        # Generate CSV
-        try:
-            csv_content = csv_handler.get_csv_as_string(results)
-            if not csv_content:
-                return error_response(
-                    'Failed to generate CSV',
-                    500,
-                    request_id
-                )
+            
         except Exception as e:
-            app.logger.error(f"CSV generation error: {str(e)}")
-            return error_response(
-                'Failed to generate CSV',
-                500,
-                request_id
-            )
-        
-        # Prepare CSV response
-        response = make_response(csv_content)
-        response.headers['Content-Type'] = 'text/csv'
-        response.headers['Content-Disposition'] = f'attachment; filename=yc_jobs_{request_id}.csv'
-        response.headers['X-Request-ID'] = request_id
-        response.headers['X-Record-Count'] = str(len(results))
-        
-        return response
-        
+            logger.error(f"Error during scraping: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return jsonify({
+                "status": "error",
+                "message": f"Error scraping URL: {str(e)}",
+                "traceback": traceback.format_exc()
+            }), 500
+            
     except Exception as e:
-        app.logger.error(f"Error processing request {request_id}: {str(e)}")
-        app.logger.error(f"Traceback: {traceback.format_exc()}")
-        return error_response(
-            'Internal server error',
-            500,
-            request_id
-        ) 
+        logger.error(f"Error processing request: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "status": "error",
+            "message": f"Server error: {str(e)}",
+            "traceback": traceback.format_exc()
+        }), 500 
