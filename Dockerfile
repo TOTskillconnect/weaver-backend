@@ -34,6 +34,9 @@ COPY . .
 # Create log directory
 RUN mkdir -p /app/logs && chmod 777 /app/logs
 
+# Install Playwright browsers
+RUN pip install playwright && playwright install chromium
+
 # Set environment variables
 ENV FLASK_APP=app.py
 ENV FLASK_ENV=production
