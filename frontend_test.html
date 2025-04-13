@@ -179,7 +179,38 @@
                 
                 // Store the response
                 responseState.linkedinResponse = response;
-                responseElement.textContent = JSON.stringify(response, null, 2);
+                
+                // Format the response to be more readable
+                let formattedOutput = '';
+                if (response.data && response.data.length > 0) {
+                    formattedOutput = `<h4>Found LinkedIn URLs in ${response.data.length} jobs:</h4>`;
+                    
+                    response.data.forEach((job, i) => {
+                        formattedOutput += `<div style="margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">`;
+                        formattedOutput += `<p><strong>Job ${i+1}:</strong> ${job.title || 'Unknown'} at ${job.company || 'Unknown'}</p>`;
+                        formattedOutput += `<p><strong>URL:</strong> ${job.job_url || ''}</p>`;
+                        
+                        const linkedinUrls = job.linkedin_urls || [];
+                        // Filter out Y Combinator school links
+                        const relevantUrls = linkedinUrls.filter(url => !url.includes('/school/y-combinator/'));
+                        
+                        if (relevantUrls.length > 0) {
+                            formattedOutput += `<p><strong>LinkedIn URLs (${relevantUrls.length}):</strong></p><ul>`;
+                            relevantUrls.forEach(url => {
+                                formattedOutput += `<li><a href="${url}" target="_blank">${url}</a></li>`;
+                            });
+                            formattedOutput += `</ul>`;
+                        } else {
+                            formattedOutput += `<p>No relevant LinkedIn URLs found</p>`;
+                        }
+                        
+                        formattedOutput += `</div>`;
+                    });
+                } else {
+                    formattedOutput = 'No LinkedIn URLs found';
+                }
+                
+                responseElement.innerHTML = formattedOutput;
                 console.log('LinkedIn scraping successful:', response);
             } catch (error) {
                 console.error('Error scraping LinkedIn URLs:', error);
