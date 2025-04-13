@@ -3,10 +3,16 @@ import json
 
 # Test the LinkedIn URL extraction endpoint on Render.com
 url = "https://weaver-backend.onrender.com/api/scrape/linkedin"
-headers = {"Content-Type": "application/json", "Origin": "https://weaverai.vercel.app"}
-data = {"url": "https://www.ycombinator.com/jobs/role/sales-manager"}
+headers = {
+    "Content-Type": "application/json", 
+    "Origin": "https://weaverai.vercel.app",
+    "Accept": "application/json",
+    "X-Requested-With": "XMLHttpRequest"
+}
+data = {"url": "https://www.ycombinator.com/jobs/role/software-engineer"}
 
 print(f"Making request to {url}...")
+print(f"With headers: {headers}")
 response = requests.post(url, headers=headers, json=data)
 print(f"Status code: {response.status_code}")
 print(f"Response headers: {response.headers}")
