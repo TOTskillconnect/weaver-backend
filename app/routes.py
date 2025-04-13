@@ -179,6 +179,19 @@ def get_job_progress(job_id):
 @async_route
 async def scrape_linkedin():
     """Scrape LinkedIn URLs directly from Y Combinator job pages without job tracking."""
+    # Handle preflight OPTIONS request directly
+    if request.method == 'OPTIONS':
+        response = jsonify({
+            "status": "success",
+            "message": "CORS preflight request successful"
+        })
+        # Manually add CORS headers
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
+        
     try:
         logger.info("Received LinkedIn scrape request")
         data = request.get_json()
@@ -262,12 +275,15 @@ async def scrape_linkedin():
             
             if not results:
                 logger.warning("No LinkedIn URLs found")
-                return jsonify({
+                response = jsonify({
                     "status": "success",
                     "message": "No LinkedIn URLs found",
                     "data": [],
                     "progress": progress_data
                 })
+                # Manually add CORS headers
+                response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+                return response
             
             # Count founder URLs across all results
             total_founder_urls = sum(len(result.get('founder_linkedin_urls', [])) for result in results)
@@ -279,18 +295,21 @@ async def scrape_linkedin():
                 
             logger.info(success_message)
             
-            return jsonify({
+            response = jsonify({
                 "status": "success",
                 "message": success_message,
                 "data": results,
                 "progress": progress_data
             })
+            # Manually add CORS headers
+            response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+            return response
             
         except Exception as e:
             error_msg = f"Error scraping LinkedIn URLs: {str(e)}"
             logger.error(error_msg)
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return jsonify({
+            response = jsonify({
                 "status": "error",
                 "message": error_msg,
                 "data": [],
@@ -301,12 +320,16 @@ async def scrape_linkedin():
                     "total": 100
                 }
             }), 500
+            # Manually add CORS headers to error response
+            if isinstance(response, tuple) and len(response) == 2:
+                response[0].headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+            return response
             
     except Exception as e:
         error_msg = f"Server error: {str(e)}"
         logger.error(error_msg)
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return jsonify({
+        response = jsonify({
             "status": "error",
             "message": error_msg,
             "data": [],
@@ -317,6 +340,10 @@ async def scrape_linkedin():
                 "total": 100
             }
         }), 500
+        # Manually add CORS headers to error response
+        if isinstance(response, tuple) and len(response) == 2:
+            response[0].headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        return response
 
 @bp.route('/api/cors-test', methods=['GET', 'POST', 'OPTIONS'])
 @cross_origin(supports_credentials=True, origins=["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"], max_age=600)
