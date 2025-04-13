@@ -199,12 +199,12 @@ async def scrape_linkedin():
         
         logger.info(f"Processing URL for LinkedIn extraction: {url}")
         
-        # Initialize scraper
-        scraper = YCombinatorScraper()
-        
         try:
-            # Scrape LinkedIn URLs directly
-            results = await scraper.scrape_linkedin_urls(url)
+            # Import at runtime to avoid circular imports
+            from app.scraper.simple_scraper import extract_linkedin_urls
+            
+            # Use the simple scraper instead
+            results = await extract_linkedin_urls(url)
             
             if not results:
                 logger.warning("No LinkedIn URLs found")
