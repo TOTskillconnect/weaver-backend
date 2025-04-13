@@ -13,7 +13,11 @@ logging.basicConfig(
 os.environ['FLASK_ENV'] = 'development'
 os.environ['FLASK_DEBUG'] = '1'
 
-from app import app
+# Import the app factory function
+from app import create_app
+
+# Create app instance
+app = create_app()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) 
