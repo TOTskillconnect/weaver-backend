@@ -294,7 +294,11 @@ async def extract_linkedin_urls(url: str) -> List[Dict[str, Any]]:
                     '[role="listitem"] a',
                     'main a',
                     // Selector for job cards as seen in the screenshot
-                    'article a', 
+                    'article a',
+                    // Add new selectors for the recruiting-hr job page format
+                    'ul li a[href*="/companies/"]',
+                    'li a[href*="/jobs/"]',
+                    '.jobs-list li a',
                     // Add a more general selector as a fallback
                     'a'
                 ];
@@ -345,6 +349,12 @@ async def extract_linkedin_urls(url: str) -> List[Dict[str, Any]]:
         filtered_urls = [url for url in job_urls if '/jobs/' in url and url.startswith('http')]
         if filtered_urls:
             job_urls = filtered_urls
+        
+        # Prioritize actual company job URLs over navigation URLs
+        company_job_urls = [url for url in job_urls if '/companies/' in url and '/jobs/' in url]
+        if company_job_urls:
+            logger.info(f"Found {len(company_job_urls)} company job URLs, prioritizing these")
+            job_urls = company_job_urls
         
         job_urls = list(set(job_urls))  # Remove duplicates
         logger.info(f"Found {len(job_urls)} job URLs")
