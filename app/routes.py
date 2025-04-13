@@ -239,7 +239,6 @@ async def scrape_linkedin():
             # Process each result to prioritize founder LinkedIn URLs
             for i, result in enumerate(results):
                 founder_urls = result.get('founder_linkedin_urls', [])
-                company_urls = result.get('company_linkedin_urls', [])
                 all_urls = result.get('linkedin_urls', [])
                 
                 # Log the breakdown of URLs
@@ -247,13 +246,14 @@ async def scrape_linkedin():
                     logger.info(f"Result {i+1}: {result.get('title')} at {result.get('company')}")
                     logger.info(f"  Founder LinkedIn URLs ({len(founder_urls)}): {founder_urls}")
                     logger.info(f"  Founder Names: {result.get('founder_names', [])}")
-                    
-                    if company_urls:
-                        logger.info(f"  Company LinkedIn URLs ({len(company_urls)}): {company_urls}")
                 else:
                     logger.info(f"Result {i+1}: {result.get('title')} at {result.get('company')}")
                     logger.info(f"  No founder LinkedIn URLs found")
                     logger.info(f"  All LinkedIn URLs ({len(all_urls)}): {all_urls}")
+                
+                # Remove company_linkedin_urls from the result to simplify response
+                if 'company_linkedin_urls' in result:
+                    del result['company_linkedin_urls']
             
             # Update progress
             progress_data["status"] = "complete"

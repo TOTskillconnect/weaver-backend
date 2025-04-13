@@ -45,21 +45,14 @@ try:
                     if founder_names:
                         print(f"Founder names: {', '.join(founder_names)}")
                 
-                # Check if there are company LinkedIn URLs
-                company_urls = job.get('company_linkedin_urls', [])
-                if company_urls:
-                    print(f"Found {len(company_urls)} COMPANY LinkedIn URLs:")
-                    for j, linkedin_url in enumerate(company_urls):
-                        print(f"  {j+1}. {linkedin_url}")
-                
                 # Check for regular LinkedIn URLs as fallback
                 linkedin_urls = job.get('linkedin_urls', [])
-                if not founder_urls and not company_urls and linkedin_urls:
+                if not founder_urls and linkedin_urls:
                     print(f"Found {len(linkedin_urls)} LinkedIn URLs (not categorized):")
                     for j, linkedin_url in enumerate(linkedin_urls):
                         print(f"  {j+1}. {linkedin_url}")
                 
-                if not linkedin_urls and not founder_urls and not company_urls:
+                if not linkedin_urls and not founder_urls:
                     print("No LinkedIn URLs found in this job")
         else:
             print("\nNo LinkedIn URLs found in any jobs")
