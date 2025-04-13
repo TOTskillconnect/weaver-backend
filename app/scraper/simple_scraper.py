@@ -121,6 +121,17 @@ async def extract_linkedin_urls(url: str) -> List[Dict[str, Any]]:
         
         # Process each job URL (limit to 5 for testing)
         max_to_process = min(len(job_urls), 5)
+        
+        # If URL is the main jobs page, process more URLs
+        if '/jobs' in url and not ('/role/' in url or '/companies/' in url):
+            logger.info("Main jobs page detected - processing more URLs")
+            max_to_process = min(len(job_urls), 15)  # Process more URLs from the main page
+            
+        # If URL is a role-specific page, process more URLs
+        if '/role/' in url:
+            logger.info("Role-specific page detected - processing more URLs")
+            max_to_process = min(len(job_urls), 15)  # Process more URLs from role pages
+                
         for i, job_url in enumerate(job_urls[:max_to_process]):
             try:
                 logger.info(f"Processing job {i+1}/{max_to_process}: {job_url}")
@@ -154,15 +165,35 @@ async def extract_linkedin_urls(url: str) -> List[Dict[str, Any]]:
                             }
                         }
                         
-                        // Find all LinkedIn URLs
-                        const linkedinUrls = Array.from(document.querySelectorAll('a[href*="linkedin.com"]'))
-                            .map(a => a.href)
-                            .filter(url => url && url.includes('linkedin.com'));
-                            
+                        // Find all LinkedIn URLs with a more aggressive approach
+                        const linkedinUrls = [];
+                        
+                        // Method 1: Direct link detection
+                        document.querySelectorAll('a[href*="linkedin.com"]').forEach(a => {
+                            if (a.href && a.href.includes('linkedin.com')) {
+                                linkedinUrls.push(a.href);
+                            }
+                        });
+                        
+                        // Method 2: Look for social links that might contain LinkedIn
+                        document.querySelectorAll('a.social-link, a.linkedin, a[aria-label*="LinkedIn"], a[title*="LinkedIn"]').forEach(a => {
+                            if (a.href && a.href.includes('linkedin.com')) {
+                                linkedinUrls.push(a.href);
+                            }
+                        });
+                        
+                        // Method 3: Look for social icons
+                        document.querySelectorAll('a i.fa-linkedin, a i.linkedin, a svg[class*="linkedin"]').forEach(icon => {
+                            const link = icon.closest('a');
+                            if (link && link.href && link.href.includes('linkedin.com')) {
+                                linkedinUrls.push(link.href);
+                            }
+                        });
+                        
                         return {
                             title,
                             company,
-                            linkedin_urls: linkedinUrls
+                            linkedin_urls: [...new Set(linkedinUrls)] // Remove duplicates
                         };
                     }
                 """)

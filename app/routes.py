@@ -203,15 +203,45 @@ async def scrape_linkedin():
             # Import at runtime to avoid circular imports
             from app.scraper.simple_scraper import extract_linkedin_urls
             
+            # Progress update for frontend compatibility
+            # This mimics the job tracking progress updates but works directly
+            progress_data = {
+                "status": "starting",
+                "message": "Initializing scraper...",
+                "processed": 0,
+                "total": 0
+            }
+            
             # Use the simple scraper instead
+            logger.info("Starting LinkedIn URL extraction")
+            
+            # Update progress
+            progress_data["status"] = "scraping"
+            progress_data["message"] = "Scraping LinkedIn URLs..."
+            progress_data["total"] = 100
+            
+            # Perform the scraping
             results = await extract_linkedin_urls(url)
+            
+            # Log detailed information about results
+            logger.info(f"Scraping complete. Found {len(results)} results with LinkedIn URLs")
+            for i, result in enumerate(results):
+                logger.info(f"Result {i+1}: {result.get('title')} at {result.get('company')}")
+                linkedin_urls = result.get('linkedin_urls', [])
+                logger.info(f"LinkedIn URLs: {linkedin_urls}")
+            
+            # Update progress
+            progress_data["status"] = "complete"
+            progress_data["message"] = "Scraping complete"
+            progress_data["processed"] = 100
             
             if not results:
                 logger.warning("No LinkedIn URLs found")
                 return jsonify({
                     "status": "success",
                     "message": "No LinkedIn URLs found",
-                    "data": []
+                    "data": [],
+                    "progress": progress_data  # Include progress data
                 })
             
             logger.info(f"Successfully found LinkedIn URLs from {len(results)} jobs")
@@ -219,7 +249,8 @@ async def scrape_linkedin():
             return jsonify({
                 "status": "success",
                 "message": f"Successfully found LinkedIn URLs from {len(results)} jobs",
-                "data": results
+                "data": results,
+                "progress": progress_data  # Include progress data
             })
             
         except Exception as e:
@@ -229,7 +260,13 @@ async def scrape_linkedin():
             return jsonify({
                 "status": "error",
                 "message": error_msg,
-                "data": []
+                "data": [],
+                "progress": {
+                    "status": "error",
+                    "message": error_msg,
+                    "processed": 0,
+                    "total": 100
+                }
             }), 500
             
     except Exception as e:
@@ -239,5 +276,11 @@ async def scrape_linkedin():
         return jsonify({
             "status": "error",
             "message": error_msg,
-            "data": []
+            "data": [],
+            "progress": {
+                "status": "error",
+                "message": error_msg,
+                "processed": 0,
+                "total": 100
+            }
         }), 500 
