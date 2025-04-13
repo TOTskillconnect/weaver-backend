@@ -200,11 +200,10 @@ async def scrape_linkedin():
         logger.info(f"Processing URL for LinkedIn extraction: {url}")
         
         try:
-            # Import at runtime to avoid circular imports
-            from app.scraper.simple_scraper import extract_linkedin_urls
+            # Check if this is a direct company job URL
+            is_direct_job = '/companies/' in url and '/jobs/' in url
             
             # Progress update for frontend compatibility
-            # This mimics the job tracking progress updates but works directly
             progress_data = {
                 "status": "starting",
                 "message": "Initializing scraper...",
@@ -212,8 +211,8 @@ async def scrape_linkedin():
                 "total": 0
             }
             
-            # Use the simple scraper instead
-            logger.info("Starting LinkedIn URL extraction")
+            # Initialize scraper
+            scraper = YCombinatorScraper()
             
             # Update progress
             progress_data["status"] = "scraping"
@@ -221,14 +220,40 @@ async def scrape_linkedin():
             progress_data["total"] = 100
             
             # Perform the scraping
-            results = await extract_linkedin_urls(url)
+            if is_direct_job:
+                # For direct job URLs, use the main scraper's extract_linkedin_urls method
+                logger.info(f"Direct job URL detected, extracting LinkedIn URLs from: {url}")
+                
+                async with scraper.browser_context():
+                    result = await scraper.extract_linkedin_urls(url)
+                    # Only include the result if LinkedIn URLs were found
+                    results = [result] if result.get('linkedin_urls') else []
+            else:
+                # For job listings pages, use scrape_linkedin_urls
+                logger.info(f"Job listing page detected, extracting LinkedIn URLs from all jobs on: {url}")
+                results = await scraper.scrape_linkedin_urls(url)
             
             # Log detailed information about results
             logger.info(f"Scraping complete. Found {len(results)} results with LinkedIn URLs")
+            
+            # Process each result to prioritize founder LinkedIn URLs
             for i, result in enumerate(results):
-                logger.info(f"Result {i+1}: {result.get('title')} at {result.get('company')}")
-                linkedin_urls = result.get('linkedin_urls', [])
-                logger.info(f"LinkedIn URLs: {linkedin_urls}")
+                founder_urls = result.get('founder_linkedin_urls', [])
+                company_urls = result.get('company_linkedin_urls', [])
+                all_urls = result.get('linkedin_urls', [])
+                
+                # Log the breakdown of URLs
+                if founder_urls:
+                    logger.info(f"Result {i+1}: {result.get('title')} at {result.get('company')}")
+                    logger.info(f"  Founder LinkedIn URLs ({len(founder_urls)}): {founder_urls}")
+                    logger.info(f"  Founder Names: {result.get('founder_names', [])}")
+                    
+                    if company_urls:
+                        logger.info(f"  Company LinkedIn URLs ({len(company_urls)}): {company_urls}")
+                else:
+                    logger.info(f"Result {i+1}: {result.get('title')} at {result.get('company')}")
+                    logger.info(f"  No founder LinkedIn URLs found")
+                    logger.info(f"  All LinkedIn URLs ({len(all_urls)}): {all_urls}")
             
             # Update progress
             progress_data["status"] = "complete"
@@ -241,16 +266,24 @@ async def scrape_linkedin():
                     "status": "success",
                     "message": "No LinkedIn URLs found",
                     "data": [],
-                    "progress": progress_data  # Include progress data
+                    "progress": progress_data
                 })
             
-            logger.info(f"Successfully found LinkedIn URLs from {len(results)} jobs")
+            # Count founder URLs across all results
+            total_founder_urls = sum(len(result.get('founder_linkedin_urls', [])) for result in results)
+            
+            if total_founder_urls > 0:
+                success_message = f"Successfully found {total_founder_urls} founder LinkedIn URLs from {len(results)} jobs"
+            else:
+                success_message = f"Found LinkedIn URLs from {len(results)} jobs, but no founder URLs identified"
+                
+            logger.info(success_message)
             
             return jsonify({
                 "status": "success",
-                "message": f"Successfully found LinkedIn URLs from {len(results)} jobs",
+                "message": success_message,
                 "data": results,
-                "progress": progress_data  # Include progress data
+                "progress": progress_data
             })
             
         except Exception as e:

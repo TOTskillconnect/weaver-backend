@@ -9,7 +9,7 @@ headers = {
     "Accept": "application/json",
     "X-Requested-With": "XMLHttpRequest"
 }
-data = {"url": "https://www.ycombinator.com/jobs/role/software-engineer"}
+data = {"url": "https://www.ycombinator.com/companies/prelim/jobs/RzlfhQq-people-talent-lead"}
 
 print(f"Making request to {url}...")
 print(f"With headers: {headers}")
@@ -28,17 +28,38 @@ try:
     if response.status_code == 200:
         data = response_data.get("data", [])
         if data:
-            print(f"\nFound LinkedIn URLs from {len(data)} jobs:")
+            print(f"\nFound results from {len(data)} jobs:")
             for i, job in enumerate(data):
                 print(f"\nJob {i+1}: {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")
                 print(f"Job URL: {job.get('job_url', '')}")
                 
+                # Check for founder LinkedIn URLs first
+                founder_urls = job.get('founder_linkedin_urls', [])
+                if founder_urls:
+                    print(f"Found {len(founder_urls)} FOUNDER LinkedIn URLs:")
+                    for j, linkedin_url in enumerate(founder_urls):
+                        print(f"  {j+1}. {linkedin_url}")
+                    
+                    # If there are founder names, show them
+                    founder_names = job.get('founder_names', [])
+                    if founder_names:
+                        print(f"Founder names: {', '.join(founder_names)}")
+                
+                # Check if there are company LinkedIn URLs
+                company_urls = job.get('company_linkedin_urls', [])
+                if company_urls:
+                    print(f"Found {len(company_urls)} COMPANY LinkedIn URLs:")
+                    for j, linkedin_url in enumerate(company_urls):
+                        print(f"  {j+1}. {linkedin_url}")
+                
+                # Check for regular LinkedIn URLs as fallback
                 linkedin_urls = job.get('linkedin_urls', [])
-                if linkedin_urls:
-                    print(f"Found {len(linkedin_urls)} LinkedIn URLs:")
+                if not founder_urls and not company_urls and linkedin_urls:
+                    print(f"Found {len(linkedin_urls)} LinkedIn URLs (not categorized):")
                     for j, linkedin_url in enumerate(linkedin_urls):
                         print(f"  {j+1}. {linkedin_url}")
-                else:
+                
+                if not linkedin_urls and not founder_urls and not company_urls:
                     print("No LinkedIn URLs found in this job")
         else:
             print("\nNo LinkedIn URLs found in any jobs")

@@ -239,8 +239,16 @@ class YCombinatorScraper:
                 self.logger.warning("No job URLs found")
                 return []
 
-            self.logger.info(f"Found {len(job_urls)} job URLs")
-            return list(set(job_urls))  # Remove duplicates
+            # Make sure all URLs are properly formatted strings
+            cleaned_urls = []
+            for job_url in job_urls:
+                if isinstance(job_url, str) and job_url.startswith('http'):
+                    cleaned_urls.append(job_url)
+                else:
+                    self.logger.warning(f"Skipping invalid job URL: {job_url}")
+            
+            self.logger.info(f"Found {len(cleaned_urls)} valid job URLs")
+            return list(set(cleaned_urls))  # Remove duplicates
 
         except Exception as e:
             self.logger.error(f"Error scraping job listings: {str(e)}")
@@ -283,6 +291,18 @@ class YCombinatorScraper:
         try:
             self.logger.info(f"Extracting LinkedIn URLs from {job_url}")
             
+            # Make sure job_url is a string, not a coroutine
+            if not isinstance(job_url, str):
+                self.logger.error(f"Job URL is not a string: {type(job_url)}")
+                return {
+                    'job_url': str(job_url),
+                    'title': '',
+                    'company': '',
+                    'linkedin_urls': [],
+                    'founder_linkedin_urls': [],
+                    'error': f"Invalid job URL type: {type(job_url)}"
+                }
+            
             # Navigate to the page with retry logic
             max_retries = 3
             for attempt in range(max_retries):
@@ -298,7 +318,7 @@ class YCombinatorScraper:
 
             # Wait for content to load
             await page.wait_for_selector('main', timeout=10000)
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(3000)  # Extended wait time to ensure founders section loads
 
             # Extract basic job info and all LinkedIn URLs
             data = await page.evaluate("""
@@ -320,10 +340,53 @@ class YCombinatorScraper:
                         return '';
                     }
                     
+                    // Extract all founder names
+                    const founderNames = [];
+                    document.querySelectorAll('.Founders h3, [class*="founder"] h3, .Founder h3').forEach(el => {
+                        if (el && el.textContent) {
+                            founderNames.push(el.textContent.trim());
+                        }
+                    });
+                    
+                    // Function to check if a URL is likely a founder profile
+                    function isFounderUrl(url, names) {
+                        if (!url || !names || names.length === 0) return false;
+                        
+                        // Convert URL to lowercase for case-insensitive matching
+                        const lowerUrl = url.toLowerCase();
+                        
+                        // Check if any founder name appears in the URL
+                        return names.some(name => {
+                            if (!name) return false;
+                            
+                            // Split name into parts
+                            const nameParts = name.toLowerCase().split(' ');
+                            
+                            // Check if any part of the name (at least 3 chars) is in the URL
+                            return nameParts.some(part => part.length > 2 && lowerUrl.includes(part));
+                        });
+                    }
+                    
+                    // Extract founder LinkedIn URLs (from Founders section, or near founder names)
+                    const foundersSection = document.querySelector('.Founders, [class*="founder"], [class*="Founder"]');
+                    const founderLinks = foundersSection ? 
+                        Array.from(foundersSection.querySelectorAll('a[href*="linkedin.com"]')).map(a => a.href) : [];
+                    
                     // Extract all LinkedIn URLs from the page
-                    const linkedinUrls = Array.from(document.querySelectorAll('a[href*="linkedin.com"]'))
+                    const allLinkedinUrls = Array.from(document.querySelectorAll('a[href*="linkedin.com"]'))
                         .map(a => a.href)
                         .filter(url => url && url.includes('linkedin.com'));
+                    
+                    // Categorize LinkedIn URLs
+                    let founderLinkedinUrls = founderLinks;
+                    
+                    // If no founder LinkedIn URLs found directly, try to identify them by name
+                    if (founderLinkedinUrls.length === 0 && founderNames.length > 0) {
+                        founderLinkedinUrls = allLinkedinUrls.filter(url => isFounderUrl(url, founderNames));
+                    }
+                    
+                    // Remaining URLs are likely company URLs
+                    const companyLinkedinUrls = allLinkedinUrls.filter(url => !founderLinkedinUrls.includes(url));
                     
                     return {
                         title: safeExtract([
@@ -339,7 +402,10 @@ class YCombinatorScraper:
                             '.company-title',
                             'h2'
                         ]),
-                        linkedin_urls: linkedinUrls
+                        linkedin_urls: allLinkedinUrls,
+                        founder_linkedin_urls: founderLinkedinUrls,
+                        company_linkedin_urls: companyLinkedinUrls,
+                        founder_names: founderNames
                     };
                 }
             """)
@@ -348,10 +414,20 @@ class YCombinatorScraper:
                 'job_url': job_url,
                 'title': data.get('title', ''),
                 'company': data.get('company', ''),
-                'linkedin_urls': data.get('linkedin_urls', [])
+                'linkedin_urls': data.get('linkedin_urls', []),
+                'founder_linkedin_urls': data.get('founder_linkedin_urls', []),
+                'company_linkedin_urls': data.get('company_linkedin_urls', []),
+                'founder_names': data.get('founder_names', [])
             }
             
-            self.logger.info(f"Found {len(result['linkedin_urls'])} LinkedIn URLs for {job_url}")
+            self.logger.info(f"Found {len(result['linkedin_urls'])} total LinkedIn URLs for {job_url}")
+            self.logger.info(f"Found {len(result['founder_linkedin_urls'])} founder LinkedIn URLs for {job_url}")
+            
+            # If we found any founder URLs, log them
+            if result['founder_linkedin_urls']:
+                self.logger.info(f"Founder LinkedIn URLs: {result['founder_linkedin_urls']}")
+                self.logger.info(f"Founder names: {result['founder_names']}")
+            
             return result
             
         except Exception as e:
@@ -362,6 +438,9 @@ class YCombinatorScraper:
                 'title': '',
                 'company': '',
                 'linkedin_urls': [],
+                'founder_linkedin_urls': [],
+                'company_linkedin_urls': [],
+                'founder_names': [],
                 'error': str(e)
             }
         finally:
@@ -373,26 +452,40 @@ class YCombinatorScraper:
         try:
             async with self.browser_context():
                 # Get job listings
+                self.logger.info(f"Fetching job listings from {url}")
                 job_urls = await self.scrape_job_listings(url)
                 self.logger.info(f"Found {len(job_urls)} job URLs to process")
                 
                 if not job_urls:
+                    self.logger.warning("No job URLs found to scrape")
                     return []
 
                 # Extract LinkedIn URLs from each job page
-                for job_url in job_urls:
+                for i, job_url in enumerate(job_urls):
                     try:
+                        self.logger.info(f"Processing job {i+1}/{len(job_urls)}: {job_url}")
                         data = await self.extract_linkedin_urls(job_url)
-                        if data and data.get('linkedin_urls'):
+                        
+                        # Log whether we found LinkedIn URLs
+                        linkedin_urls = data.get('linkedin_urls', [])
+                        if linkedin_urls:
+                            self.logger.info(f"Found {len(linkedin_urls)} LinkedIn URLs on {job_url}")
+                            self.logger.debug(f"LinkedIn URLs: {linkedin_urls}")
                             results.append(data)
+                        else:
+                            self.logger.warning(f"No LinkedIn URLs found on {job_url}")
+                        
                         # Rate limiting
                         await asyncio.sleep(1)
                     except Exception as e:
                         self.logger.error(f"Error processing job {job_url}: {str(e)}")
+                        self.logger.error(f"Traceback: {traceback.format_exc()}")
                         continue
+
+                self.logger.info(f"Successfully extracted LinkedIn URLs from {len(results)} out of {len(job_urls)} job pages")
+                return results
 
         except Exception as e:
             self.logger.error(f"Error in LinkedIn URL scrape process: {str(e)}")
             self.logger.error(f"Traceback: {traceback.format_exc()}")
-            
-        return results 
+            return results 
