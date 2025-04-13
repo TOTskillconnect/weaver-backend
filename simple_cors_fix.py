@@ -5,6 +5,7 @@ CORS proxy server for Weaver Backend.
 from flask import Flask, request, jsonify, Response, make_response
 import requests
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -38,6 +39,14 @@ def add_cors_headers(response):
 def handle_options(path):
     response = make_response()
     return response
+
+# Index route for root path
+@app.route('/')
+def index():
+    return jsonify({
+        'status': 'ok',
+        'message': 'CORS Proxy running'
+    })
 
 # Health check endpoint
 @app.route('/health')
@@ -107,4 +116,5 @@ def scrape_linkedin():
         }), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000) 
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=False) 

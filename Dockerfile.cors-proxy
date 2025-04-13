@@ -7,6 +7,9 @@ COPY simple_cors_fix.py app.py
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 8000
+# Use PORT environment variable with fallback to 8000
+ENV PORT=8000
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120", "app:app"] 
+EXPOSE $PORT
+
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app"] 
