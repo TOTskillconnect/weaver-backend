@@ -283,4 +283,25 @@ async def scrape_linkedin():
                 "processed": 0,
                 "total": 100
             }
-        }), 500 
+        }), 500
+
+@bp.route('/api/cors-test', methods=['GET', 'POST', 'OPTIONS'])
+@cross_origin(supports_credentials=True, origins=["http://localhost:3000", "https://weaver-frontend.onrender.com", "https://weaverai.vercel.app"], max_age=600)
+def cors_test():
+    """Test endpoint for CORS functionality."""
+    logger.info("CORS test endpoint called")
+    logger.info(f"Request method: {request.method}")
+    logger.info(f"Request headers: {dict(request.headers)}")
+    logger.info(f"Request origin: {request.headers.get('Origin', 'Unknown')}")
+    
+    response = jsonify({
+        "status": "success",
+        "message": "CORS is working",
+        "request_method": request.method,
+        "request_origin": request.headers.get('Origin', 'Unknown')
+    })
+    
+    # Log response headers for debugging
+    logger.info(f"Response headers: {dict(response.headers)}")
+    
+    return response 

@@ -14,7 +14,22 @@ def create_app():
     app = Flask(__name__)
 
     # Enable CORS
-    CORS(app)
+    CORS(app, 
+         resources={
+             r"/*": {
+                 "origins": [
+                     "http://localhost:3000",
+                     "https://weaver-frontend.onrender.com",
+                     "https://weaverai.vercel.app"
+                 ],
+                 "methods": ["GET", "POST", "OPTIONS"],
+                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+                 "expose_headers": ["Content-Type", "X-Total-Count", "Access-Control-Allow-Origin"],
+                 "supports_credentials": True,
+                 "max_age": 600
+             }
+         }
+    )
 
     # Setup logging
     logger = logging.getLogger(__name__)

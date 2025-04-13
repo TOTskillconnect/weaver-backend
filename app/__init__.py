@@ -22,11 +22,14 @@ def create_app():
                      "https://weaverai.vercel.app"
                  ],
                  "methods": ["GET", "POST", "OPTIONS"],
-                 "allow_headers": ["Content-Type"],
+                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+                 "expose_headers": ["Content-Type", "X-Total-Count", "Access-Control-Allow-Origin"],
                  "supports_credentials": True,
+                 "max_age": 600,
                  "send_wildcard": False
              }
-         }
+         },
+         supports_credentials=True
     )
     
     def validate_url(url: str) -> bool:
